@@ -1,0 +1,60 @@
+DROP DATABASE IF EXISTS db_cardio_expert;
+CREATE DATABASE db_cardio_expert;
+USE db_cardio_expert;
+
+CREATE TABLE users (
+    id CHAR(36) PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    fullname VARCHAR(100),
+    role ENUM('EXPERT', 'PATIENT') NOT NULL
+);
+
+CREATE TABLE dataset_cardio (
+    id CHAR(36) PRIMARY KEY,
+    age_days INT,
+    gender INT,
+    height INT,
+    weight DOUBLE,
+    ap_hi INT,
+    ap_lo INT,
+    cholesterol INT,
+    gluc INT,
+    smoke INT,
+    alco INT,
+    active INT,
+    cardio INT
+);
+
+CREATE TABLE consultations (
+    id CHAR(36) PRIMARY KEY,
+    user_id CHAR(36),
+    age_years INT,
+    bmi DOUBLE,
+    ap_hi INT,
+    ap_lo INT,
+    cholesterol INT,
+    risk_score DOUBLE,
+    risk_level VARCHAR(20),
+    recommendation TEXT,
+    consult_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE ai_models (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    model_type VARCHAR(20), 
+    model_blob LONGBLOB,
+    rules_text LONGTEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE fuzzy_stats (
+    attribute_name VARCHAR(20) PRIMARY KEY,
+    mean_val DOUBLE,
+    std_dev DOUBLE
+);
+
+INSERT INTO users (id, username, password, fullname, role) VALUES 
+(UUID(), 'admin', 'admin123', 'Dr. Strange', 'EXPERT'),
+(UUID(), 'user', 'user123', 'Tony Stark', 'PATIENT');

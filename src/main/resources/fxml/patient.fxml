@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.chart.LineChart?>
+<?import javafx.scene.chart.NumberAxis?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.RadioButton?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.Region?>
+
+<StackPane xmlns="http://javafx.com/javafx/8.0.171" xmlns:fx="http://javafx.com/fxml/1" 
+           fx:controller="com.praktikumpbo.cardioexpert.PatientController">
+    
+    <HBox spacing="20" style="-fx-background-color: #f4f6f8;">
+        <padding><Insets top="30" right="80" bottom="30" left="30"/></padding>
+
+        <VBox spacing="15" styleClass="card-pane" minWidth="400">
+            <HBox>
+                <Label text="Formulir Konsultasi" styleClass="title-label"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="btnBackAdmin" text="&lt; Kembali ke Dashboard" onAction="#handleBackAdmin" styleClass="button-secondary" visible="false"/>
+            </HBox>
+            
+            <HBox spacing="10">
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Jenis Kelamin"/>
+                    <HBox spacing="10">
+                        <RadioButton fx:id="rbMale" text="Pria" selected="true">
+                            <toggleGroup>
+                                <ToggleGroup fx:id="genderGroup"/>
+                            </toggleGroup>
+                        </RadioButton>
+                        <RadioButton fx:id="rbFemale" text="Wanita" toggleGroup="$genderGroup"/>
+                    </HBox>
+                </VBox>
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Umur (Tahun)"/>
+                    <TextField fx:id="inAge" promptText="cth. 45"/>
+                </VBox>
+            </HBox>
+
+            <HBox spacing="10">
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Tinggi (cm)"/>
+                    <TextField fx:id="inHeight" promptText="cth. 170"/>
+                </VBox>
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Berat (kg)"/>
+                    <TextField fx:id="inWeight" promptText="cth. 70"/>
+                </VBox>
+            </HBox>
+
+            <HBox spacing="10">
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Sistolik (Atas)"/>
+                    <TextField fx:id="inApHi" promptText="cth. 120"/>
+                </VBox>
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Diastolic (Bawah)"/>
+                    <TextField fx:id="inApLo" promptText="cth. 80"/>
+                </VBox>
+            </HBox>
+
+            <VBox spacing="5">
+                <Label text="Tingkat Kolesterol"/>
+                <ComboBox fx:id="cbChol" maxWidth="Infinity"/>
+            </VBox>
+
+            <VBox spacing="5">
+                <Label text="Tingkat Gula Darah"/>
+                <ComboBox fx:id="cbGluc" maxWidth="Infinity"/>
+            </VBox>
+
+            <HBox spacing="20">
+                <CheckBox fx:id="chkSmoke" text="Perokok"/>
+                <CheckBox fx:id="chkAlco" text="Alkohol"/>
+                <CheckBox fx:id="chkActive" text="Aktif Fisik"/>
+            </HBox>
+
+            <Button text="ANALISIS RISIKO" maxWidth="Infinity" onAction="#handleDiagnose" styleClass="button-primary"/>
+            <Button text="Keluar" maxWidth="Infinity" onAction="#handleLogout" styleClass="button-secondary"/>
+        </VBox>
+
+        <VBox fx:id="resultBox" spacing="15" styleClass="card-pane" HBox.hgrow="ALWAYS" visible="false">
+            <Label text="Hasil Analisis Sistem" styleClass="title-label"/>
+            
+            <VBox styleClass="result-box" alignment="CENTER" spacing="10">
+                <Label text="Prediksi Risiko:" style="-fx-font-size: 14px;"/>
+                <Label fx:id="lblResultLevel" text="TIDAK DIKETAHUI" style="-fx-font-size: 28px; -fx-font-weight: bold;"/>
+            </VBox>
+
+            <Label text="Penjelasan / Saran:" style="-fx-font-weight: bold;"/>
+            <TextArea fx:id="txtRecommendation" wrapText="true" editable="false" VBox.vgrow="ALWAYS"/>
+
+            <HBox spacing="10">
+                <Button text="Rincian XAI (Grafik)" onAction="#toggleDrawer" styleClass="button-secondary" maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
+                <Button text="Ekspor PDF" onAction="#handleExportPdf" styleClass="button-primary" maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
+                <Button text="Simpan Gambar" onAction="#handleExportImage" styleClass="button-primary" maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
+            </HBox>
+        </VBox>
+    </HBox>
+
+    <VBox fx:id="drawer" styleClass="drawer-pane" maxWidth="600" StackPane.alignment="CENTER_RIGHT" translateX="600">
+        <Label text="Detail Explainable AI (XAI)" style="-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 16px;"/>
+        
+        <TabPane tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" style="-fx-background-color: white; -fx-background-radius: 5;">
+            <Tab text="Log Perhitungan">
+                <TextArea fx:id="txtLog" editable="false" style="-fx-font-family: 'Consolas';"/>
+            </Tab>
+            <Tab text="Daftar Aturan (Rule Base)">
+                <TextArea fx:id="txtRulesDesc" editable="false" style="-fx-font-family: 'Consolas';"/>
+            </Tab>
+            <Tab text="Grafik Posisi">
+                <VBox>
+                    <LineChart fx:id="chartFuzzyBP" title="Posisi Tekanan Darah" legendVisible="true">
+                        <xAxis><NumberAxis label="mmHg" forceZeroInRange="false"/></xAxis>
+                        <yAxis><NumberAxis label="Densitas"/></yAxis>
+                    </LineChart>
+                    <LineChart fx:id="chartFuzzyAge" title="Posisi Umur Pasien" legendVisible="true">
+                        <xAxis><NumberAxis label="Hari" forceZeroInRange="false"/></xAxis>
+                        <yAxis><NumberAxis label="Densitas"/></yAxis>
+                    </LineChart>
+                    <LineChart fx:id="chartFuzzyWeight" title="Posisi Berat Badan" legendVisible="true">
+                        <xAxis><NumberAxis label="Kg" forceZeroInRange="false"/></xAxis>
+                        <yAxis><NumberAxis label="Densitas"/></yAxis>
+                    </LineChart>
+                </VBox>
+            </Tab>
+        </TabPane>
+        
+        <Button text="Tutup Panel" onAction="#toggleDrawer" styleClass="button-secondary" maxWidth="Infinity"/>
+    </VBox>
+
+</StackPane>

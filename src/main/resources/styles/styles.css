@@ -1,0 +1,71 @@
+.root {
+    -fx-background-color: #f4f6f8;
+    -fx-font-family: "Segoe UI";
+}
+
+.card-pane {
+    -fx-background-color: white;
+    -fx-background-radius: 10;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 2);
+    -fx-padding: 20;
+}
+
+/* DRAWER (EASTER EGG) */
+.drawer-pane {
+    -fx-background-color: #2d3436;
+    -fx-background-radius: 10 0 0 10;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0, 0, 0);
+    -fx-padding: 20;
+}
+
+.title-label {
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2d3436;
+}
+
+.button-primary {
+    -fx-background-color: #0984e3;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-background-radius: 5;
+    -fx-padding: 10 20;
+    -fx-cursor: hand;
+}
+.button-primary:hover { -fx-background-color: #74b9ff; }
+
+.button-secondary {
+    -fx-background-color: #636e72;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-background-radius: 5;
+    -fx-padding: 10 20;
+    -fx-cursor: hand;
+}
+
+/* Floating Action Button Style */
+.button-fab {
+    -fx-background-color: #e17055;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-background-radius: 30;
+    -fx-min-width: 50;
+    -fx-min-height: 50;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 5, 0, 0, 1);
+    -fx-cursor: hand;
+}
+.button-fab:hover { -fx-background-color: #ff7675; }
+
+.text-field, .combo-box, .text-area {
+    -fx-background-color: white;
+    -fx-border-color: #dfe6e9;
+    -fx-border-radius: 4;
+}
+.text-field:focused { -fx-border-color: #0984e3; }
+
+.result-box {
+    -fx-background-color: #f1f2f6;
+    -fx-border-color: #b2bec3;
+    -fx-border-radius: 5;
+    -fx-padding: 15;
+}

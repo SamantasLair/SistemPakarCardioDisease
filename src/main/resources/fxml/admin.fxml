@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.chart.BarChart?>
+<?import javafx.scene.chart.CategoryAxis?>
+<?import javafx.scene.chart.LineChart?>
+<?import javafx.scene.chart.NumberAxis?>
+<?import javafx.scene.chart.PieChart?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.Region?>
+
+<StackPane xmlns="http://javafx.com/javafx/8.0.171" xmlns:fx="http://javafx.com/fxml/1" 
+           fx:controller="com.praktikumpbo.cardioexpert.AdminController">
+
+    <VBox spacing="20" style="-fx-background-color: #f4f6f8;">
+        <padding><Insets top="30" right="80" bottom="30" left="30"/></padding>
+
+        <HBox alignment="CENTER_LEFT" spacing="10">
+            <Label text="Dashboard Pakar" styleClass="title-label"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Button text="Simulasi Pasien" onAction="#handleSimulation" styleClass="button-primary"/>
+            <Button text="Keluar" onAction="#handleLogout" styleClass="button-secondary"/>
+        </HBox>
+
+        <HBox spacing="20" styleClass="card-pane" alignment="CENTER_LEFT">
+            <Button text="Latih Model (Impor CSV)" onAction="#handleImportCsv" styleClass="button-primary"/>
+            <VBox>
+                <Label text="Total Data: " style="-fx-text-fill: #636e72;"/>
+                <Label fx:id="lblTotalData" text="0" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+            </VBox>
+            <VBox>
+                <Label text="Kasus Berisiko: " style="-fx-text-fill: #636e72;"/>
+                <Label fx:id="lblHighRisk" text="0" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #d63031;"/>
+            </VBox>
+        </HBox>
+
+        <HBox spacing="20" VBox.vgrow="ALWAYS">
+            <VBox styleClass="card-pane" HBox.hgrow="ALWAYS" prefWidth="450">
+                <Label text="Distribusi Fuzzy Statistik" style="-fx-font-weight: bold;"/>
+                <TabPane tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
+                    <Tab text="Tekanan Darah">
+                        <LineChart fx:id="chartFuzzyBP" legendVisible="false">
+                            <xAxis><NumberAxis label="mmHg" forceZeroInRange="false"/></xAxis>
+                            <yAxis><NumberAxis label="Densitas"/></yAxis>
+                        </LineChart>
+                    </Tab>
+                    <Tab text="Umur">
+                        <LineChart fx:id="chartFuzzyAge" legendVisible="false">
+                            <xAxis><NumberAxis label="Hari" forceZeroInRange="false"/></xAxis>
+                            <yAxis><NumberAxis label="Densitas"/></yAxis>
+                        </LineChart>
+                    </Tab>
+                    <Tab text="Berat Badan">
+                        <LineChart fx:id="chartFuzzyWeight" legendVisible="false">
+                            <xAxis><NumberAxis label="Kg" forceZeroInRange="false"/></xAxis>
+                            <yAxis><NumberAxis label="Densitas"/></yAxis>
+                        </LineChart>
+                    </Tab>
+                </TabPane>
+            </VBox>
+
+            <VBox spacing="20" HBox.hgrow="ALWAYS">
+                <VBox styleClass="card-pane" VBox.vgrow="ALWAYS">
+                    <Label text="Distribusi Risiko" style="-fx-font-weight: bold;"/>
+                    <PieChart fx:id="pieChart"/>
+                </VBox>
+            </VBox>
+        </HBox>
+    </VBox>
+
+    <Button text="J48 Tree" onAction="#toggleDrawer" styleClass="button-fab" StackPane.alignment="CENTER_RIGHT" style="-fx-translate-x: -20;"/>
+
+    <VBox fx:id="drawer" styleClass="drawer-pane" maxWidth="500" StackPane.alignment="CENTER_RIGHT" translateX="500">
+        <Label text="Struktur Decision Tree J48" style="-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 16px;"/>
+        <TextArea fx:id="txtTree" VBox.vgrow="ALWAYS" editable="false" style="-fx-control-inner-background: #2d3436; -fx-text-fill: #00b894; -fx-font-family: 'Consolas';"/>
+        <Button text="Tutup Panel" onAction="#toggleDrawer" styleClass="button-secondary" maxWidth="Infinity"/>
+    </VBox>
+
+</StackPane>
