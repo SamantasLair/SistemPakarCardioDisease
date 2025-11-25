@@ -15,7 +15,6 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.fxml.FXML;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.chart.LineChart;
-import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -99,13 +98,17 @@ public class PatientController {
             currentLog = result.calculationLog;
 
             resultBox.setVisible(true);
-            lblResultLevel.setText(result.level);
+            
+            lblResultLevel.setText(result.level + " (" + String.format("%.1f", result.score) + "%)");
             txtRecommendation.setText(result.recommendation);
             txtLog.setText(result.calculationLog);
             
-            if (result.level.contains("TINGGI")) lblResultLevel.setStyle("-fx-text-fill: #d63031; -fx-font-size: 28px; -fx-font-weight: bold;");
-            else if (result.level.contains("SEDANG")) lblResultLevel.setStyle("-fx-text-fill: #e67e22; -fx-font-size: 28px; -fx-font-weight: bold;");
-            else lblResultLevel.setStyle("-fx-text-fill: #27ae60; -fx-font-size: 28px; -fx-font-weight: bold;");
+            if (result.level.contains("TINGGI")) 
+                lblResultLevel.setStyle("-fx-text-fill: #d63031; -fx-font-size: 24px; -fx-font-weight: bold;");
+            else if (result.level.contains("SEDANG")) 
+                lblResultLevel.setStyle("-fx-text-fill: #e67e22; -fx-font-size: 24px; -fx-font-weight: bold;");
+            else 
+                lblResultLevel.setStyle("-fx-text-fill: #27ae60; -fx-font-size: 24px; -fx-font-weight: bold;");
 
             saveHistory(age, bmi, hi, lo, chol, result);
             plotPatientPosition(age, hi, w);
@@ -116,36 +119,50 @@ public class PatientController {
     }
 
     private void plotPatientPosition(int age, int bp, double weight) {
-        plotGaussianWithPoint(chartFuzzyBP, "ap_hi", bp);
-        plotGaussianWithPoint(chartFuzzyAge, "age_days", age * 365);
-        plotGaussianWithPoint(chartFuzzyWeight, "weight", weight);
+        if (InferenceEngine.means.containsKey("ap_hi")) {
+            plotGaussianWithLine(chartFuzzyBP, 
+                InferenceEngine.means.get("ap_hi"), 
+                InferenceEngine.stdDevs.get("ap_hi"), 
+                bp);
+        }
+
+        if (InferenceEngine.means.containsKey("weight")) {
+            plotGaussianWithLine(chartFuzzyWeight, 
+                InferenceEngine.means.get("weight"), 
+                InferenceEngine.stdDevs.get("weight"), 
+                weight);
+        }
+
+        String ageKey = InferenceEngine.means.containsKey("age") ? "age" : "age_days";
+        if (InferenceEngine.means.containsKey(ageKey)) {
+            double meanDays = InferenceEngine.means.get(ageKey);
+            double stdDays = InferenceEngine.stdDevs.get(ageKey);
+            plotGaussianWithLine(chartFuzzyAge, meanDays / 365.0, stdDays / 365.0, age);
+        }
     }
 
-    private void plotGaussianWithPoint(LineChart<Number, Number> chart, String attr, double patientVal) {
+    private void plotGaussianWithLine(LineChart<Number, Number> chart, double mean, double std, double patientVal) {
         chart.getData().clear();
-        if (!InferenceEngine.means.containsKey(attr)) return;
-
-        double mean = InferenceEngine.means.get(attr);
-        double std = InferenceEngine.stdDevs.get(attr);
         
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         series.setName("Populasi");
-        XYChart.Series<Number, Number> patientSeries = new XYChart.Series<>();
-        patientSeries.setName("Posisi Pasien");
-
-        double minX = mean - 3 * std;
-        double maxX = mean + 3 * std;
-        double step = (maxX - minX) / 50;
+        
+        double minX = mean - 3.5 * std;
+        double maxX = mean + 3.5 * std;
+        double step = (maxX - minX) / 100;
+        double peakY = (1 / (std * Math.sqrt(2 * Math.PI)));
 
         for (double x = minX; x <= maxX; x += step) {
             double y = (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
             series.getData().add(new XYChart.Data<>(x, y));
         }
 
-        double pY = (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((patientVal - mean) / std, 2));
-        patientSeries.getData().add(new XYChart.Data<>(patientVal, pY));
+        XYChart.Series<Number, Number> patientLine = new XYChart.Series<>();
+        patientLine.setName("Anda");
+        patientLine.getData().add(new XYChart.Data<>(patientVal, 0));
+        patientLine.getData().add(new XYChart.Data<>(patientVal, peakY));
 
-        chart.getData().addAll(series, patientSeries);
+        chart.getData().addAll(series, patientLine);
     }
 
     private void saveHistory(int age, double bmi, int hi, int lo, int chol, InferenceEngine.DiagnosisResult res) {
@@ -163,7 +180,7 @@ public class PatientController {
             ps.setString(9, res.level);
             ps.setString(10, res.recommendation);
             ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {}
     }
 
     @FXML
@@ -174,18 +191,18 @@ public class PatientController {
             PdfDocument pdf = new PdfDocument(writer);
             Document doc = new Document(pdf);
             
-            doc.add(new Paragraph("LAPORAN DIAGNOSIS JANTUNG").setBold().setFontSize(18).setTextAlignment(TextAlignment.CENTER));
+            doc.add(new Paragraph("LAPORAN ANALISIS JANTUNG").setBold().setFontSize(18).setTextAlignment(TextAlignment.CENTER));
             doc.add(new Paragraph("------------------------------------------------"));
             doc.add(new Paragraph("Nama Pasien: " + UserSession.name));
-            doc.add(new Paragraph("Tingkat Risiko: " + lblResultLevel.getText()).setBold());
-            doc.add(new Paragraph("Saran Medis: \n" + txtRecommendation.getText()));
+            doc.add(new Paragraph("Hasil Analisis: " + lblResultLevel.getText()).setBold());
+            doc.add(new Paragraph("Rekomendasi: \n" + txtRecommendation.getText()));
             doc.add(new AreaBreak());
-            doc.add(new Paragraph("RINCIAN PERHITUNGAN STATISTIK:").setBold());
+            doc.add(new Paragraph("LOGIKA MATEMATIS (DATA DRIVEN):").setBold());
             doc.add(new Paragraph(currentLog).setFontSize(10));
             
             doc.close();
             new Alert(Alert.AlertType.INFORMATION, "PDF Tersimpan: " + fname).show();
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {}
     }
 
     @FXML
@@ -195,7 +212,7 @@ public class PatientController {
             File file = new File("Laporan_" + System.currentTimeMillis() + ".png");
             ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", file);
             new Alert(Alert.AlertType.INFORMATION, "Gambar Tersimpan: " + file.getName()).show();
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {}
     }
     
     @FXML private void handleLogout() throws java.io.IOException { App.setRoot("login"); }

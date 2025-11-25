@@ -6,17 +6,16 @@ import java.net.URL;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Optional;
 import java.util.ResourceBundle;
 import javafx.animation.TranslateTransition;
-import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.chart.BarChart;
-import javafx.scene.chart.CategoryAxis;
 import javafx.scene.chart.LineChart;
-import javafx.scene.chart.NumberAxis;
-import javafx.scene.chart.PieChart;
 import javafx.scene.chart.XYChart;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.layout.VBox;
@@ -25,21 +24,61 @@ import javafx.util.Duration;
 
 public class AdminController implements Initializable {
 
-    @FXML private Label lblTotalData, lblHighRisk;
-    @FXML private PieChart pieChart;
-    @FXML private BarChart<String, Number> barChart;
+    @FXML private Label lblTotalData, lblHighRisk, lblRiskPercent;
+    @FXML private BarChart<Number, String> chartRiskDist; 
+    @FXML private BarChart<String, Number> barChartAge;
     @FXML private LineChart<Number, Number> chartFuzzyBP, chartFuzzyAge, chartFuzzyWeight;
     @FXML private TextArea txtTree;
     @FXML private VBox drawer;
+    @FXML private VBox sidebar;
 
     private boolean isDrawerOpen = false;
+    private boolean isSidebarOpen = false;
+    private final double SIDEBAR_WIDTH = 250.0;
 
     @Override
     public void initialize(URL url, ResourceBundle rb) {
+        sidebar.setTranslateX(-SIDEBAR_WIDTH);
+        
         InferenceEngine.loadSystem();
         txtTree.setText(InferenceEngine.j48Rules);
         loadAnalytics();
         plotFuzzyGraphs();
+    }
+
+    @FXML
+    private void toggleSidebar() {
+        TranslateTransition transition = new TranslateTransition(Duration.millis(300), sidebar);
+        
+        if (isSidebarOpen) {
+            transition.setToX(-SIDEBAR_WIDTH);
+        } else {
+            transition.setToX(0);
+        }
+        
+        transition.play();
+        isSidebarOpen = !isSidebarOpen;
+    }
+    
+    private void closeSidebar() {
+        if (isSidebarOpen) {
+            TranslateTransition transition = new TranslateTransition(Duration.millis(300), sidebar);
+            transition.setToX(-SIDEBAR_WIDTH);
+            transition.play();
+            isSidebarOpen = false;
+        }
+    }
+
+    @FXML
+    private void handleDashboardOverview() {
+        closeSidebar();
+    }
+    
+    @FXML
+    private void handleOutsideClick() {
+        if (isSidebarOpen) {
+            closeSidebar();
+        }
     }
 
     @FXML
@@ -53,6 +92,7 @@ public class AdminController implements Initializable {
 
     @FXML
     private void handleImportCsv() {
+        closeSidebar();
         FileChooser fc = new FileChooser();
         fc.setTitle("Pilih File CSV");
         File file = fc.showOpenDialog(null);
@@ -63,8 +103,49 @@ public class AdminController implements Initializable {
                 txtTree.setText(InferenceEngine.j48Rules);
                 loadAnalytics();
                 plotFuzzyGraphs();
+                new Alert(Alert.AlertType.INFORMATION, "Import dan Training Berhasil!").show();
             } catch (Exception e) {
                 txtTree.setText("Pelatihan Gagal: " + e.getMessage());
+            }
+        }
+    }
+
+    @FXML
+    private void handleResetData() {
+        closeSidebar();
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Konfirmasi Reset");
+        alert.setHeaderText("Hapus Semua Data?");
+        alert.setContentText("Tindakan ini akan menghapus seluruh dataset, statistik, dan model AI.");
+
+        Optional<ButtonType> result = alert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            try (Connection conn = DBConnect.getConnection();
+                 Statement stmt = conn.createStatement()) {
+                
+                stmt.executeUpdate("TRUNCATE TABLE dataset_cardio");
+                stmt.executeUpdate("TRUNCATE TABLE fuzzy_stats_v2");
+                stmt.executeUpdate("DELETE FROM ai_models");
+                
+                InferenceEngine.means.clear();
+                InferenceEngine.stdDevs.clear();
+                InferenceEngine.weights.clear();
+                InferenceEngine.j48Rules = "Model belum dilatih.";
+                
+                lblTotalData.setText("0");
+                lblHighRisk.setText("0");
+                lblRiskPercent.setText("0%");
+                chartRiskDist.getData().clear();
+                barChartAge.getData().clear();
+                chartFuzzyBP.getData().clear();
+                chartFuzzyAge.getData().clear();
+                chartFuzzyWeight.getData().clear();
+                txtTree.setText("");
+                
+                new Alert(Alert.AlertType.INFORMATION, "Sistem berhasil direset.").show();
+                
+            } catch (Exception e) {
+                new Alert(Alert.AlertType.ERROR, "Gagal reset: " + e.getMessage()).show();
             }
         }
     }
@@ -79,39 +160,68 @@ public class AdminController implements Initializable {
              Statement stmt = conn.createStatement()) {
 
             ResultSet rs = stmt.executeQuery("SELECT COUNT(*), SUM(CASE WHEN cardio=1 THEN 1 ELSE 0 END) FROM dataset_cardio");
+            int total = 0;
+            int highRisk = 0;
             if (rs.next()) {
-                lblTotalData.setText(rs.getString(1));
-                lblHighRisk.setText(rs.getString(2));
+                total = rs.getInt(1);
+                highRisk = rs.getInt(2);
+                lblTotalData.setText(String.format("%,d", total));
+                lblHighRisk.setText(String.format("%,d", highRisk));
             }
 
+            double percent = (total > 0) ? ((double)highRisk / total * 100) : 0;
+            lblRiskPercent.setText(String.format("%.1f%%", percent));
+
             rs = stmt.executeQuery("SELECT cardio, COUNT(*) FROM dataset_cardio GROUP BY cardio");
-            var pieData = FXCollections.<PieChart.Data>observableArrayList();
-            while (rs.next()) pieData.add(new PieChart.Data(rs.getInt(1)==1?"Sakit":"Sehat", rs.getInt(2)));
-            pieChart.setData(pieData);
+            XYChart.Series<Number, String> seriesRisk = new XYChart.Series<>();
+            seriesRisk.setName("Jumlah Pasien");
+            
+            int healthyCount = 0;
+            int sickCount = 0;
+            
+            while (rs.next()) {
+                if (rs.getInt(1) == 0) healthyCount = rs.getInt(2);
+                else sickCount = rs.getInt(2);
+            }
+            
+            seriesRisk.getData().add(new XYChart.Data<>(sickCount, "Berisiko"));
+            seriesRisk.getData().add(new XYChart.Data<>(healthyCount, "Sehat"));
+            
+            chartRiskDist.getData().clear();
+            chartRiskDist.getData().add(seriesRisk);
 
-            rs = stmt.executeQuery("SELECT FLOOR(age_days/365/10)*10 as d, SUM(cardio) FROM dataset_cardio GROUP BY d");
-            XYChart.Series<String, Number> series = new XYChart.Series<>();
-            while (rs.next()) series.getData().add(new XYChart.Data<>(rs.getString(1)+"an", rs.getInt(2)));
-            barChart.getData().clear();
-            barChart.getData().add(series);
+            rs = stmt.executeQuery("SELECT FLOOR(age_days/365/10)*10 as d, SUM(cardio) FROM dataset_cardio GROUP BY d ORDER BY d");
+            XYChart.Series<String, Number> seriesAge = new XYChart.Series<>();
+            seriesAge.setName("Kasus");
+            while (rs.next()) {
+                seriesAge.getData().add(new XYChart.Data<>(rs.getString(1) + "s", rs.getInt(2)));
+            }
+            barChartAge.getData().clear();
+            barChartAge.getData().add(seriesAge);
 
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {}
     }
 
     private void plotFuzzyGraphs() {
         if (InferenceEngine.means.isEmpty()) return;
-        plotGaussian(chartFuzzyBP, "ap_hi", InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"));
-        plotGaussian(chartFuzzyAge, "age_days", InferenceEngine.means.get("age_days"), InferenceEngine.stdDevs.get("age_days"));
-        plotGaussian(chartFuzzyWeight, "weight", InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"));
+        
+        plotGaussian(chartFuzzyBP, InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"));
+        
+        String ageKey = InferenceEngine.means.containsKey("age") ? "age" : "age_days";
+        double meanAge = InferenceEngine.means.getOrDefault(ageKey, 0.0);
+        double stdAge = InferenceEngine.stdDevs.getOrDefault(ageKey, 1.0);
+        plotGaussian(chartFuzzyAge, meanAge / 365.0, stdAge / 365.0);
+        
+        plotGaussian(chartFuzzyWeight, InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"));
     }
 
-    private void plotGaussian(LineChart<Number, Number> chart, String name, double mean, double std) {
+    private void plotGaussian(LineChart<Number, Number> chart, double mean, double std) {
         chart.getData().clear();
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
-        series.setName("Distribusi Populasi");
+        series.setName("Populasi");
 
-        double minX = mean - 3 * std;
-        double maxX = mean + 3 * std;
+        double minX = mean - 3.5 * std;
+        double maxX = mean + 3.5 * std;
         double step = (maxX - minX) / 50;
 
         for (double x = minX; x <= maxX; x += step) {

@@ -8,10 +8,13 @@ import java.io.ObjectOutputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
+import weka.attributeSelection.CorrelationAttributeEval;
 import weka.classifiers.Classifier;
 import weka.classifiers.trees.J48;
+import weka.core.AttributeStats;
 import weka.core.Instances;
 import weka.core.converters.CSVLoader;
 import weka.filters.Filter;
@@ -25,25 +28,60 @@ public class InferenceEngine {
 
     public static Map<String, Double> means = new HashMap<>();
     public static Map<String, Double> stdDevs = new HashMap<>();
-
-    private static final String[] ALL_COLS = {
-        "age_days", "gender", "height", "weight", "ap_hi", "ap_lo", 
-        "cholesterol", "gluc", "smoke", "alco", "active"
-    };
+    public static Map<String, Double> weights = new HashMap<>();
 
     public static void trainSystem(String csvPath) throws Exception {
-        trainJ48(csvPath);
-        calculateFuzzyStats();
-    }
-
-    private static void trainJ48(String csvPath) throws Exception {
         CSVLoader loader = new CSVLoader();
         loader.setSource(new File(csvPath));
-        loader.setFieldSeparator(";"); 
-        Instances dataRaw = loader.getDataSet();
+        loader.setFieldSeparator(";");
+        Instances data = loader.getDataSet();
+        
+        if (data.classIndex() == -1)
+            data.setClassIndex(data.numAttributes() - 1);
 
+        calculateStatisticsAndWeights(data);
+        trainJ48(data);
+    }
+
+    private static void calculateStatisticsAndWeights(Instances data) throws Exception {
+        CorrelationAttributeEval eval = new CorrelationAttributeEval();
+        eval.buildEvaluator(data);
+
+        try (Connection conn = DBConnect.getConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS fuzzy_stats_v2 (attribute_name VARCHAR(50) PRIMARY KEY, mean_val DOUBLE, std_dev DOUBLE, weight_factor DOUBLE)");
+
+            String upsert = "INSERT INTO fuzzy_stats_v2 VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE mean_val=?, std_dev=?, weight_factor=?";
+            PreparedStatement ps = conn.prepareStatement(upsert);
+
+            for (int i = 0; i < data.numAttributes(); i++) {
+                if (i == data.classIndex()) continue;
+
+                String attrName = data.attribute(i).name();
+                AttributeStats stats = data.attributeStats(i);
+                double mean = stats.numericStats.mean;
+                double std = stats.numericStats.stdDev;
+                double weight = Math.abs(eval.evaluateAttribute(i));
+
+                if (Double.isNaN(mean)) mean = 0;
+                if (Double.isNaN(std)) std = 1;
+
+                ps.setString(1, attrName);
+                ps.setDouble(2, mean);
+                ps.setDouble(3, std);
+                ps.setDouble(4, weight);
+                ps.setDouble(5, mean);
+                ps.setDouble(6, std);
+                ps.setDouble(7, weight);
+                ps.executeUpdate();
+            }
+        }
+        loadSystem();
+    }
+
+    private static void trainJ48(Instances dataRaw) throws Exception {
         Remove remove = new Remove();
-        remove.setAttributeIndices("1"); 
+        remove.setAttributeIndices("1");
         remove.setInputFormat(dataRaw);
         Instances dataNoID = Filter.useFilter(dataRaw, remove);
 
@@ -56,29 +94,7 @@ public class InferenceEngine {
         classifier = new J48();
         classifier.buildClassifier(dataFinal);
         j48Rules = classifier.toString();
-        saveJ48ToDB();
-    }
-
-    private static void calculateFuzzyStats() {
-        try (Connection conn = DBConnect.getConnection()) {
-            for (String col : ALL_COLS) {
-                String sql = "SELECT AVG(" + col + "), STDDEV(" + col + ") FROM dataset_cardio";
-                ResultSet rs = conn.createStatement().executeQuery(sql);
-                if (rs.next()) {
-                    double mean = rs.getDouble(1);
-                    double std = rs.getDouble(2);
-                    
-                    String upsert = "INSERT INTO fuzzy_stats VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE mean_val=?, std_dev=?";
-                    PreparedStatement ps = conn.prepareStatement(upsert);
-                    ps.setString(1, col); ps.setDouble(2, mean); ps.setDouble(3, std);
-                    ps.setDouble(4, mean); ps.setDouble(5, std);
-                    ps.executeUpdate();
-                }
-            }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private static void saveJ48ToDB() throws Exception {
+        
         try (Connection conn = DBConnect.getConnection()) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ObjectOutputStream oos = new ObjectOutputStream(baos);
@@ -93,7 +109,17 @@ public class InferenceEngine {
 
     public static void loadSystem() {
         try (Connection conn = DBConnect.getConnection()) {
-            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM ai_models WHERE model_type='J48' ORDER BY id DESC LIMIT 1");
+            means.clear(); stdDevs.clear(); weights.clear();
+            
+            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM fuzzy_stats_v2");
+            while (rs.next()) {
+                String attr = rs.getString("attribute_name");
+                means.put(attr, rs.getDouble("mean_val"));
+                stdDevs.put(attr, rs.getDouble("std_dev"));
+                weights.put(attr, rs.getDouble("weight_factor"));
+            }
+
+            rs = conn.createStatement().executeQuery("SELECT * FROM ai_models WHERE model_type='J48' ORDER BY id DESC LIMIT 1");
             if (rs.next()) {
                 j48Rules = rs.getString("rules_text");
                 byte[] blob = rs.getBytes("model_blob");
@@ -102,155 +128,91 @@ public class InferenceEngine {
                     classifier = (Classifier) ois.readObject();
                 }
             }
-            rs = conn.createStatement().executeQuery("SELECT * FROM fuzzy_stats");
-            while (rs.next()) {
-                means.put(rs.getString("attribute_name"), rs.getDouble("mean_val"));
-                stdDevs.put(rs.getString("attribute_name"), rs.getDouble("std_dev"));
-            }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    // ===== KEMBALIKAN METHOD INI =====
-    public static String getFuzzyRulesDocumentation() {
-        return "BASIS PENGETAHUAN (FUZZY SUGENO STATISTICAL)\n" +
-               "============================================\n" +
-               "Logika didasarkan pada Z-Score Populasi Data.\n\n" +
-               "1. TEKANAN DARAH\n" +
-               "   - IF Z-Score(Tensi) > 1.0 THEN Skor +30 (Bahaya)\n" +
-               "   - IF Z-Score(Tensi) > 0.5 THEN Skor +15 (Waspada)\n\n" +
-               "2. INDEKS MASSA TUBUH (BMI)\n" +
-               "   - IF BMI > 30 THEN Skor +20 (Obesitas)\n" +
-               "   - IF BMI > 25 THEN Skor +10 (Overweight)\n\n" +
-               "3. FAKTOR USIA\n" +
-               "   - IF Z-Score(Usia) > 1.0 THEN Skor +10\n\n" +
-               "4. HASIL LAB (Kolesterol & Gula)\n" +
-               "   - IF Z-Score(Chol) > 1.0 THEN Skor +20\n" +
-               "   - IF Z-Score(Gluc) > 1.0 THEN Skor +20\n\n" +
-               "5. GAYA HIDUP\n" +
-               "   - Merokok: Skor +15\n" +
-               "   - Alkohol: Skor +10\n" +
-               "   - Tidak Aktif: Skor +10\n" +
-               "   - Aktif Olahraga: Skor -5 (Bonus)\n\n" +
-               "--------------------------------------------\n" +
-               "KEPUTUSAN AKHIR (Total Skor):\n" +
-               "   - Skor >= 60 : RISIKO TINGGI\n" +
-               "   - Skor >= 30 : RISIKO SEDANG\n" +
-               "   - Skor <  30 : RISIKO RENDAH\n";
+        } catch (Exception e) {}
     }
 
     public static DiagnosisResult predictFuzzy(int ageY, int gender, int height, double weight, int apHi, int apLo, int chol, int gluc, int smoke, int alco, int active) {
         if (means.isEmpty()) loadSystem();
         if (means.isEmpty()) return new DiagnosisResult("MODEL BELUM SIAP", 0, "Harap latih model.", "");
 
-        double score = 0;
-        StringBuilder rec = new StringBuilder();
+        double logit = 0;
         StringBuilder log = new StringBuilder();
+        StringBuilder rec = new StringBuilder();
 
-        double heightM = height / 100.0;
-        double bmi = weight / (heightM * heightM);
+        Map<String, Double> inputs = new HashMap<>();
+        inputs.put("age_days", (double) ageY * 365);
+        inputs.put("gender", (double) gender);
+        inputs.put("height", (double) height);
+        inputs.put("weight", weight);
+        inputs.put("ap_hi", (double) apHi);
+        inputs.put("ap_lo", (double) apLo);
+        inputs.put("cholesterol", (double) chol);
+        inputs.put("gluc", (double) gluc);
+        inputs.put("smoke", (double) smoke);
+        inputs.put("alco", (double) alco);
+        inputs.put("active", (double) active);
 
-        log.append("=== 1. FUZZIFIKASI DATA (Z-Score) ===\n");
-        
-        double ageDays = ageY * 365.0;
-        double zAge = getZScore("age_days", ageDays);
-        double zWeight = getZScore("weight", weight);
-        double zApHi = getZScore("ap_hi", (double)apHi);
-        
-        log.append(String.format("Umur: %.2f (Z: %.2f)\n", ageDays, zAge));
-        log.append(String.format("Tensi Hi: %d (Z: %.2f)\n", apHi, zApHi));
-        log.append(String.format("BMI: %.2f\n", bmi));
+        log.append("=== PERHITUNGAN LOG-ODDS (Z-SCORE x WEIGHT) ===\n");
 
-        log.append("\n=== 2. INFERENSI ===\n");
+        for (String attr : inputs.keySet()) {
+            if (!means.containsKey(attr)) continue;
 
-        if (zApHi > 1.0) { 
-            score += 30; 
-            rec.append("- Tekanan Darah Tinggi (Signifikan di atas rata-rata).\n"); 
-            log.append("[BAHAYA] Tensi Sangat Tinggi (+30)\n");
-        } else if (zApHi > 0.5) {
-            score += 15;
-            log.append("[WASPADA] Tensi Agak Tinggi (+15)\n");
+            double val = inputs.get(attr);
+            double mean = means.get(attr);
+            double std = stdDevs.get(attr);
+            double weightAttr = weights.getOrDefault(attr, 0.0);
+
+            if (std == 0) std = 1;
+            double zScore = (val - mean) / std;
+
+            if (attr.equals("active")) zScore = -zScore; 
+
+            double contribution = 0;
+            if (zScore > 0) {
+                contribution = zScore * weightAttr;
+                logit += contribution;
+                
+                log.append(String.format("- %s: Val=%.1f, Z=%.2f, W=%.3f -> Contrib=%.3f\n", 
+                        attr, val, zScore, weightAttr, contribution));
+                
+                if (contribution > 0.5) {
+                    rec.append("- Perhatian pada ").append(attr).append(" (High Impact)\n");
+                }
+            }
         }
 
-        if (zAge > 1.0) { 
-            score += 10; 
-            log.append("[FAKTOR] Usia Lanjut (+10)\n");
-        }
+        double probability = 1.0 / (1.0 + Math.exp(-logit));
+        double percent = probability * 100;
 
-        if (chol > 1) { 
-            score += 20; 
-            rec.append("- Kolesterol Jauh Diatas Normal.\n"); 
-            log.append("[BAHAYA] Kolesterol Tinggi (+20)\n");
-        }
-
-        if (gluc > 1) { 
-            score += 20; 
-            rec.append("- Gula Darah Tinggi.\n"); 
-            log.append("[BAHAYA] Gula Darah Tinggi (+20)\n");
-        }
-
-        if (bmi > 30) {
-            score += 20;
-            rec.append("- Berat Badan Berlebih (Obesitas).\n");
-            log.append("[RISIKO] BMI Tinggi (+20)\n");
-        } else if (bmi > 25) {
-            score += 10;
-            log.append("[RISIKO] BMI Overweight (+10)\n");
-        }
-        
-        if (zWeight > 1.0) {
-            score += 15;
-            log.append("[RISIKO] Berat Badan vs Populasi (+15)\n");
-        }
-
-        if (gender == 2) { 
-            score += 5;
-            log.append("[FAKTOR] Gender Pria (+5)\n");
-        }
-
-        if (smoke == 1) { 
-            score += 15; 
-            rec.append("- Berhenti Merokok.\n"); 
-            log.append("[RISIKO] Perokok (+15)\n");
-        }
-
-        if (alco == 1) {
-            score += 10;
-            rec.append("- Kurangi Konsumsi Alkohol.\n");
-            log.append("[RISIKO] Alkohol (+10)\n");
-        }
-
-        if (active == 0) {
-            score += 10;
-            rec.append("- Kurang Gerak. Perbanyak olahraga.\n");
-            log.append("[RISIKO] Tidak Aktif (+10)\n");
-        } else {
-            score -= 5; 
-            log.append("[BONUS] Aktif Fisik (-5)\n");
-        }
-
-        if (score < 0) score = 0;
-
-        log.append("\n=== 3. DEFUZZIFIKASI ===\n");
-        log.append("Total Skor Risiko: " + score + "\n");
+        log.append("\n=== HASIL PROBABILITAS (SIGMOID) ===\n");
+        log.append(String.format("Logit Sum: %.4f\n", logit));
+        log.append(String.format("Probability: %.2f%%\n", percent));
 
         String level;
-        if (score >= 60) level = "RISIKO TINGGI";
-        else if (score >= 30) level = "RISIKO SEDANG";
+        if (probability > 0.8) level = "RISIKO TINGGI";
+        else if (probability > 0.5) level = "RISIKO SEDANG";
         else level = "RISIKO RENDAH";
-        
-        log.append("Keputusan Akhir: " + level);
 
-        if (rec.length() == 0) rec.append("- Pertahankan gaya hidup sehat Anda.");
+        if (rec.length() == 0) rec.append("Kondisi relatif aman berdasarkan statistik populasi.");
 
-        return new DiagnosisResult(level, score, rec.toString(), log.toString());
+        return new DiagnosisResult(level, percent, rec.toString(), log.toString());
     }
 
-    private static double getZScore(String attr, double val) {
-        if (!means.containsKey(attr)) return 0;
-        double mu = means.get(attr);
-        double sigma = stdDevs.get(attr);
-        if (sigma == 0) return 0;
-        return (val - mu) / sigma;
+    public static String getFuzzyRulesDocumentation() {
+        if (weights.isEmpty()) loadSystem();
+        StringBuilder sb = new StringBuilder();
+        sb.append("BASIS PENGETAHUAN DINAMIS (DATA-DRIVEN)\n");
+        sb.append("=======================================\n");
+        sb.append("Bobot berikut dihasilkan otomatis dari analisis korelasi dataset.\n");
+        sb.append("Rumus: Risk = Sigmoid(Sum(Z-Score * Weight))\n\n");
+        
+        weights.entrySet().stream()
+               .sorted((k1, k2) -> k2.getValue().compareTo(k1.getValue()))
+               .forEach(e -> {
+                   sb.append(String.format("- %-12s : Bobot Pengaruh %.4f\n", e.getKey(), e.getValue()));
+               });
+               
+        return sb.toString();
     }
 
     public static class DiagnosisResult {
