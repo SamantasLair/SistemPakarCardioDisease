@@ -187,3 +187,27 @@
     -fx-cursor: hand;
 }
 .button-action:hover { -fx-background-color: #74b9ff; }
+
+.calc-step-box {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #e9ecef;
+    -fx-border-radius: 5;
+    -fx-padding: 15;
+    -fx-margin: 5;
+}
+
+.calc-step-header {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2c3e50;
+    -fx-padding: 0 0 5 0;
+    -fx-border-color: transparent transparent #dee2e6 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.calc-step-content {
+    -fx-font-family: "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: #495057;
+    -fx-padding: 10 0 0 0;
+}

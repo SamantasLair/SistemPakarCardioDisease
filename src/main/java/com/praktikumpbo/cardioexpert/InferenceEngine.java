@@ -1,10 +1,6 @@
 package com.praktikumpbo.cardioexpert;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -12,7 +8,6 @@ import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
 import weka.attributeSelection.CorrelationAttributeEval;
-import weka.classifiers.Classifier;
 import weka.classifiers.trees.J48;
 import weka.core.AttributeStats;
 import weka.core.Instances;
@@ -23,12 +18,10 @@ import weka.filters.unsupervised.attribute.Remove;
 
 public class InferenceEngine {
 
-    private static Classifier classifier;
-    public static String j48Rules = "Model belum dilatih.";
-
     public static Map<String, Double> means = new HashMap<>();
     public static Map<String, Double> stdDevs = new HashMap<>();
     public static Map<String, Double> weights = new HashMap<>();
+    public static String j48Rules = "Model Legacy J48 belum dilatih.";
 
     public static void trainSystem(String csvPath) throws Exception {
         CSVLoader loader = new CSVLoader();
@@ -40,7 +33,26 @@ public class InferenceEngine {
             data.setClassIndex(data.numAttributes() - 1);
 
         calculateStatisticsAndWeights(data);
-        trainJ48(data);
+        trainJ48(data); 
+    }
+    
+    public static void loadSystem() {
+        try (Connection conn = DBConnect.getConnection()) {
+            means.clear(); stdDevs.clear(); weights.clear();
+            
+            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM fuzzy_stats_v2");
+            while (rs.next()) {
+                String attr = rs.getString("attribute_name");
+                means.put(attr, rs.getDouble("mean_val"));
+                stdDevs.put(attr, rs.getDouble("std_dev"));
+                weights.put(attr, rs.getDouble("weight_factor"));
+            }
+
+            rs = conn.createStatement().executeQuery("SELECT * FROM ai_models WHERE model_type='J48' ORDER BY id DESC LIMIT 1");
+            if (rs.next()) {
+                j48Rules = rs.getString("rules_text");
+            }
+        } catch (Exception e) {}
     }
 
     private static void calculateStatisticsAndWeights(Instances data) throws Exception {
@@ -76,12 +88,11 @@ public class InferenceEngine {
                 ps.executeUpdate();
             }
         }
-        loadSystem();
     }
 
     private static void trainJ48(Instances dataRaw) throws Exception {
         Remove remove = new Remove();
-        remove.setAttributeIndices("1");
+        remove.setAttributeIndices("1"); 
         remove.setInputFormat(dataRaw);
         Instances dataNoID = Filter.useFilter(dataRaw, remove);
 
@@ -91,56 +102,35 @@ public class InferenceEngine {
         Instances dataFinal = Filter.useFilter(dataNoID, convert);
         dataFinal.setClassIndex(dataFinal.numAttributes() - 1);
 
-        classifier = new J48();
+        J48 classifier = new J48();
+        classifier.setOptions(new String[]{"-C", "0.25", "-M", "2"});
         classifier.buildClassifier(dataFinal);
-        j48Rules = classifier.toString();
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== LEGACY J48 DECISION TREE (REFERENSI SAJA) ===\n");
+        sb.append("Model ini tidak digunakan untuk perhitungan risiko aktif.\n");
+        sb.append("Hanya sebagai pembanding struktur keputusan statis.\n\n");
+        sb.append(classifier.toString());
+        j48Rules = sb.toString();
         
         try (Connection conn = DBConnect.getConnection()) {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ObjectOutputStream oos = new ObjectOutputStream(baos);
-            oos.writeObject(classifier);
             String sql = "INSERT INTO ai_models (model_type, model_blob, rules_text) VALUES ('J48', ?, ?)";
             PreparedStatement ps = conn.prepareStatement(sql);
-            ps.setBytes(1, baos.toByteArray());
+            ps.setBytes(1, new byte[0]); 
             ps.setString(2, j48Rules);
             ps.executeUpdate();
         }
     }
 
-    public static void loadSystem() {
-        try (Connection conn = DBConnect.getConnection()) {
-            means.clear(); stdDevs.clear(); weights.clear();
-            
-            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM fuzzy_stats_v2");
-            while (rs.next()) {
-                String attr = rs.getString("attribute_name");
-                means.put(attr, rs.getDouble("mean_val"));
-                stdDevs.put(attr, rs.getDouble("std_dev"));
-                weights.put(attr, rs.getDouble("weight_factor"));
-            }
-
-            rs = conn.createStatement().executeQuery("SELECT * FROM ai_models WHERE model_type='J48' ORDER BY id DESC LIMIT 1");
-            if (rs.next()) {
-                j48Rules = rs.getString("rules_text");
-                byte[] blob = rs.getBytes("model_blob");
-                if (blob != null) {
-                    ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(blob));
-                    classifier = (Classifier) ois.readObject();
-                }
-            }
-        } catch (Exception e) {}
-    }
-
-    public static DiagnosisResult predictFuzzy(int ageY, int gender, int height, double weight, int apHi, int apLo, int chol, int gluc, int smoke, int alco, int active) {
+    public static DiagnosisResult predictSugeno(int ageY, int gender, int height, double weight, int apHi, int apLo, int chol, int gluc, int smoke, int alco, int active) {
         if (means.isEmpty()) loadSystem();
-        if (means.isEmpty()) return new DiagnosisResult("MODEL BELUM SIAP", 0, "Harap latih model.", "");
-
-        double logit = 0;
-        StringBuilder log = new StringBuilder();
+        
+        StringBuilder calcLog = new StringBuilder();
+        StringBuilder rulesLog = new StringBuilder();
         StringBuilder rec = new StringBuilder();
 
         Map<String, Double> inputs = new HashMap<>();
-        inputs.put("age_days", (double) ageY * 365);
+        inputs.put("age", (double) ageY);
         inputs.put("gender", (double) gender);
         inputs.put("height", (double) height);
         inputs.put("weight", weight);
@@ -152,66 +142,128 @@ public class InferenceEngine {
         inputs.put("alco", (double) alco);
         inputs.put("active", (double) active);
 
-        log.append("=== PERHITUNGAN LOG-ODDS (Z-SCORE x WEIGHT) ===\n");
+        calcLog.append("=== LANGKAH 1: HYBRID INFERENCE (GAUSSIAN & CRISP) ===\n");
+        calcLog.append("Metode: Sugeno Hybrid (Continuous -> Gaussian, Categorical -> Crisp)\n");
+        calcLog.append("Tujuan: Menghitung total risiko terbobot secara adil.\n\n");
+        
+        double currentRiskSum = 0;
+        double totalPossibleWeight = 0;
 
         for (String attr : inputs.keySet()) {
-            if (!means.containsKey(attr)) continue;
+            String dbKey = attr.equals("age") ? "age_days" : attr; 
+            if (!weights.containsKey(dbKey)) continue;
 
-            double val = inputs.get(attr);
-            double mean = means.get(attr);
-            double std = stdDevs.get(attr);
-            double weightAttr = weights.getOrDefault(attr, 0.0);
+            double inputVal = inputs.get(attr);
+            double corrWeight = weights.get(dbKey);
+            double alpha = 0;
+            String method = "";
 
-            if (std == 0) std = 1;
-            double zScore = (val - mean) / std;
+            // LOGIKA HYBRID: Pisahkan Continuous vs Categorical
+            if (isContinuous(attr)) {
+                // CONTINUOUS: Gunakan Gaussian Fuzzy
+                double dbVal = inputVal; 
+                if(attr.equals("age")) dbVal = inputVal * 365; 
 
-            if (attr.equals("active")) zScore = -zScore; 
-
-            double contribution = 0;
-            if (zScore > 0) {
-                contribution = zScore * weightAttr;
-                logit += contribution;
+                double mean = means.get(dbKey);
+                double std = stdDevs.get(dbKey);
                 
-                log.append(String.format("- %s: Val=%.1f, Z=%.2f, W=%.3f -> Contrib=%.3f\n", 
-                        attr, val, zScore, weightAttr, contribution));
-                
-                if (contribution > 0.5) {
-                    rec.append("- Perhatian pada ").append(attr).append(" (High Impact)\n");
-                }
+                // Mu (Normal)
+                double mu = Math.exp(-0.5 * Math.pow((dbVal - mean) / std, 2));
+                // Alpha (Risiko/Abnormal)
+                alpha = 1.0 - mu;
+                method = String.format("Gaussian (Mean=%.1f, Std=%.1f)", (attr.equals("age")?mean/365:mean), (attr.equals("age")?std/365:std));
+            
+            } else {
+                // CATEGORICAL: Gunakan Crisp Mapping (Lookup Table)
+                alpha = getCrispRisk(attr, inputVal);
+                method = "Crisp Mapping (Tabel Risiko)";
+            }
+            
+            double attributeRiskContribution = alpha * corrWeight;
+            currentRiskSum += attributeRiskContribution;
+            totalPossibleWeight += corrWeight;
+
+            calcLog.append(String.format("[VAR] %s = %.0f\n", attr, inputVal));
+            calcLog.append(String.format("   Metode: %s\n", method));
+            calcLog.append(String.format("   Bobot Korelasi (W) = %.4f\n", corrWeight));
+            calcLog.append(String.format("   Level Risiko (Alpha) = %.4f\n", alpha));
+            calcLog.append(String.format("   Kontribusi (Alpha * W) = %.4f\n\n", attributeRiskContribution));
+            
+            if(alpha > 0.1) {
+                rulesLog.append(String.format("IF %s = %.0f THEN RiskLevel = %.2f (Weight %.2f)\n", attr, inputVal, alpha, corrWeight));
+            }
+
+            if (alpha > 0.7 && corrWeight > 0.05) {
+                rec.append("- Faktor ").append(attr).append(" terdeteksi berisiko tinggi.\n");
             }
         }
 
-        double probability = 1.0 / (1.0 + Math.exp(-logit));
-        double percent = probability * 100;
-
-        log.append("\n=== HASIL PROBABILITAS (SIGMOID) ===\n");
-        log.append(String.format("Logit Sum: %.4f\n", logit));
-        log.append(String.format("Probability: %.2f%%\n", percent));
-
+        calcLog.append("=== LANGKAH 2: DEFUZZIFIKASI (NORMALIZED SUM) ===\n");
+        double finalPercentage = 0;
+        if (totalPossibleWeight > 0) {
+            calcLog.append(String.format("Total Risiko Terkumpul = %.4f\n", currentRiskSum));
+            calcLog.append(String.format("Total Bobot Maksimal   = %.4f\n", totalPossibleWeight));
+            
+            finalPercentage = (currentRiskSum / totalPossibleWeight) * 100;
+            
+            calcLog.append(String.format("Persentase Akhir = (%.4f / %.4f) * 100 = %.2f%%\n", 
+                    currentRiskSum, totalPossibleWeight, finalPercentage));
+        }
+        
         String level;
-        if (probability > 0.8) level = "RISIKO TINGGI";
-        else if (probability > 0.5) level = "RISIKO SEDANG";
+        if (finalPercentage > 60) level = "RISIKO TINGGI";
+        else if (finalPercentage > 30) level = "RISIKO SEDANG";
         else level = "RISIKO RENDAH";
 
-        if (rec.length() == 0) rec.append("Kondisi relatif aman berdasarkan statistik populasi.");
+        if (rec.length() == 0) rec.append("Kondisi kesehatan terpantau baik.");
 
-        return new DiagnosisResult(level, percent, rec.toString(), log.toString());
+        return new DiagnosisResult(level, finalPercentage, rec.toString(), calcLog.toString(), rulesLog.toString());
+    }
+
+    private static boolean isContinuous(String attr) {
+        return attr.equals("age") || attr.equals("height") || attr.equals("weight") || 
+               attr.equals("ap_hi") || attr.equals("ap_lo");
+    }
+
+    private static double getCrispRisk(String attr, double val) {
+        int v = (int) val;
+        switch (attr) {
+            case "cholesterol":
+            case "gluc":
+                if (v == 1) return 0.0;      // Normal
+                if (v == 2) return 0.5;      // Above Normal
+                if (v == 3) return 1.0;      // High
+                break;
+            case "smoke":
+            case "alco":
+                if (v == 0) return 0.0;      // No
+                if (v == 1) return 1.0;      // Yes
+                break;
+            case "active":
+                if (v == 1) return 0.0;      // Active (Good)
+                if (v == 0) return 1.0;      // Inactive (Bad)
+                break;
+            case "gender":
+                if (v == 1) return 0.0;      // Female (Lower Risk Baseline)
+                if (v == 2) return 0.5;      // Male (Higher Risk Baseline)
+                break;
+        }
+        return 0.0;
     }
 
     public static String getFuzzyRulesDocumentation() {
         if (weights.isEmpty()) loadSystem();
         StringBuilder sb = new StringBuilder();
-        sb.append("BASIS PENGETAHUAN DINAMIS (DATA-DRIVEN)\n");
-        sb.append("=======================================\n");
-        sb.append("Bobot berikut dihasilkan otomatis dari analisis korelasi dataset.\n");
-        sb.append("Rumus: Risk = Sigmoid(Sum(Z-Score * Weight))\n\n");
+        sb.append("BASIS PENGETAHUAN HYBRID (SUGENO)\n");
+        sb.append("=================================\n");
+        sb.append("1. Variabel Kontinu (Tensi, Usia, dll) -> Gaussian Fuzzy\n");
+        sb.append("2. Variabel Kategori (Rokok, Kolesterol) -> Crisp Mapping\n\n");
         
         weights.entrySet().stream()
                .sorted((k1, k2) -> k2.getValue().compareTo(k1.getValue()))
                .forEach(e -> {
-                   sb.append(String.format("- %-12s : Bobot Pengaruh %.4f\n", e.getKey(), e.getValue()));
+                   sb.append(String.format("FAKTOR: %-12s | Bobot: %.4f\n", e.getKey(), e.getValue()));
                });
-               
         return sb.toString();
     }
 
@@ -219,13 +271,15 @@ public class InferenceEngine {
         public String level;
         public double score;
         public String recommendation;
-        public String calculationLog;
+        public String calcLog;
+        public String rulesActive;
 
-        public DiagnosisResult(String level, double score, String recommendation, String calculationLog) {
+        public DiagnosisResult(String level, double score, String recommendation, String calcLog, String rulesActive) {
             this.level = level;
             this.score = score;
             this.recommendation = recommendation;
-            this.calculationLog = calculationLog;
+            this.calcLog = calcLog;
+            this.rulesActive = rulesActive;
         }
     }
 }

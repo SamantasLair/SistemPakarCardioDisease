@@ -104,7 +104,7 @@
                 <TextArea fx:id="txtRecommendation" editable="false" wrapText="true" VBox.vgrow="ALWAYS" />
 
                 <HBox spacing="10">
-                    <Button maxWidth="Infinity" onAction="#toggleDrawer" styleClass="button-secondary" text="Rincian XAI (Grafik)" HBox.hgrow="ALWAYS" />
+                    <Button maxWidth="Infinity" onAction="#toggleDrawer" styleClass="button-secondary" text="Rincian XAI (Log &amp; Grafik)" HBox.hgrow="ALWAYS" />
                     <Button maxWidth="Infinity" onAction="#handleExportPdf" styleClass="button-primary" text="Ekspor PDF" HBox.hgrow="ALWAYS" />
                     <Button maxWidth="Infinity" onAction="#handleExportImage" styleClass="button-primary" text="Simpan Gambar" HBox.hgrow="ALWAYS" />
                 </HBox>
@@ -122,19 +122,19 @@
             <Tab text="Daftar Aturan (Rule Base)">
                 <TextArea fx:id="txtRulesDesc" editable="false" style="-fx-font-family: 'Consolas';" />
             </Tab>
-            <Tab text="Grafik Posisi">
+            <Tab text="Visualisasi Fuzzy">
                 <VBox>
-                    <LineChart fx:id="chartFuzzyBP" createSymbols="false" legendVisible="true" title="Posisi Tekanan Darah">
+                    <LineChart fx:id="chartFuzzyBP" createSymbols="false" legendVisible="true" title="Fungsi Keanggotaan: Tekanan Darah">
                         <xAxis><NumberAxis forceZeroInRange="false" label="mmHg" /></xAxis>
-                        <yAxis><NumberAxis label="Densitas" /></yAxis>
+                        <yAxis><NumberAxis label="Derajat Keanggotaan (Mu)" upperBound="1.0" /></yAxis>
                     </LineChart>
-                    <LineChart fx:id="chartFuzzyAge" createSymbols="false" legendVisible="true" title="Posisi Umur Pasien">
+                    <LineChart fx:id="chartFuzzyAge" createSymbols="false" legendVisible="true" title="Fungsi Keanggotaan: Umur">
                         <xAxis><NumberAxis forceZeroInRange="false" label="Tahun" /></xAxis>
-                        <yAxis><NumberAxis label="Densitas" /></yAxis>
+                        <yAxis><NumberAxis label="Derajat Keanggotaan (Mu)" upperBound="1.0" /></yAxis>
                     </LineChart>
-                    <LineChart fx:id="chartFuzzyWeight" createSymbols="false" legendVisible="true" title="Posisi Berat Badan">
+                    <LineChart fx:id="chartFuzzyWeight" createSymbols="false" legendVisible="true" title="Fungsi Keanggotaan: Berat Badan">
                         <xAxis><NumberAxis forceZeroInRange="false" label="Kg" /></xAxis>
-                        <yAxis><NumberAxis label="Densitas" /></yAxis>
+                        <yAxis><NumberAxis label="Derajat Keanggotaan (Mu)" upperBound="1.0" /></yAxis>
                     </LineChart>
                 </VBox>
             </Tab>

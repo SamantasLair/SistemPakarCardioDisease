@@ -42,7 +42,7 @@ public class PatientController {
     @FXML private LineChart<Number, Number> chartFuzzyBP, chartFuzzyAge, chartFuzzyWeight;
 
     private boolean isDrawerOpen = false;
-    private String currentLog = "";
+    private String currentCalcLog = "";
 
     @FXML
     public void initialize() {
@@ -94,14 +94,15 @@ public class PatientController {
             double heightM = h / 100.0;
             double bmi = w / (heightM * heightM);
 
-            var result = InferenceEngine.predictFuzzy(age, gender, h, w, hi, lo, chol, gluc, smoke, alco, active);
-            currentLog = result.calculationLog;
+            var result = InferenceEngine.predictSugeno(age, gender, h, w, hi, lo, chol, gluc, smoke, alco, active);
+            currentCalcLog = result.calcLog;
 
             resultBox.setVisible(true);
             
             lblResultLevel.setText(result.level + " (" + String.format("%.1f", result.score) + "%)");
             txtRecommendation.setText(result.recommendation);
-            txtLog.setText(result.calculationLog);
+            txtLog.setText(result.calcLog);
+            txtRulesDesc.setText(InferenceEngine.getFuzzyRulesDocumentation() + "\n\n=== ATURAN AKTIF ===\n" + result.rulesActive);
             
             if (result.level.contains("TINGGI")) 
                 lblResultLevel.setStyle("-fx-text-fill: #d63031; -fx-font-size: 24px; -fx-font-weight: bold;");
@@ -111,23 +112,23 @@ public class PatientController {
                 lblResultLevel.setStyle("-fx-text-fill: #27ae60; -fx-font-size: 24px; -fx-font-weight: bold;");
 
             saveHistory(age, bmi, hi, lo, chol, result);
-            plotPatientPosition(age, hi, w);
+            plotFuzzyCharts(age, hi, w);
 
         } catch (NumberFormatException e) {
             new Alert(Alert.AlertType.WARNING, "Mohon masukkan angka yang valid!").show();
         }
     }
 
-    private void plotPatientPosition(int age, int bp, double weight) {
+    private void plotFuzzyCharts(int age, int bp, double weight) {
         if (InferenceEngine.means.containsKey("ap_hi")) {
-            plotGaussianWithLine(chartFuzzyBP, 
+            plotMembershipFunction(chartFuzzyBP, 
                 InferenceEngine.means.get("ap_hi"), 
                 InferenceEngine.stdDevs.get("ap_hi"), 
                 bp);
         }
 
         if (InferenceEngine.means.containsKey("weight")) {
-            plotGaussianWithLine(chartFuzzyWeight, 
+            plotMembershipFunction(chartFuzzyWeight, 
                 InferenceEngine.means.get("weight"), 
                 InferenceEngine.stdDevs.get("weight"), 
                 weight);
@@ -137,32 +138,33 @@ public class PatientController {
         if (InferenceEngine.means.containsKey(ageKey)) {
             double meanDays = InferenceEngine.means.get(ageKey);
             double stdDays = InferenceEngine.stdDevs.get(ageKey);
-            plotGaussianWithLine(chartFuzzyAge, meanDays / 365.0, stdDays / 365.0, age);
+            plotMembershipFunction(chartFuzzyAge, meanDays / 365.0, stdDays / 365.0, age);
         }
     }
 
-    private void plotGaussianWithLine(LineChart<Number, Number> chart, double mean, double std, double patientVal) {
+    private void plotMembershipFunction(LineChart<Number, Number> chart, double mean, double std, double patientVal) {
         chart.getData().clear();
         
-        XYChart.Series<Number, Number> series = new XYChart.Series<>();
-        series.setName("Populasi");
+        XYChart.Series<Number, Number> seriesMu = new XYChart.Series<>();
+        seriesMu.setName("Kurva Normal");
         
         double minX = mean - 3.5 * std;
         double maxX = mean + 3.5 * std;
         double step = (maxX - minX) / 100;
-        double peakY = (1 / (std * Math.sqrt(2 * Math.PI)));
 
         for (double x = minX; x <= maxX; x += step) {
-            double y = (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
-            series.getData().add(new XYChart.Data<>(x, y));
+            double mu = Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
+            seriesMu.getData().add(new XYChart.Data<>(x, mu));
         }
 
         XYChart.Series<Number, Number> patientLine = new XYChart.Series<>();
-        patientLine.setName("Anda");
+        patientLine.setName("Posisi Pasien");
+        
+        double patientMu = Math.exp(-0.5 * Math.pow((patientVal - mean) / std, 2));
         patientLine.getData().add(new XYChart.Data<>(patientVal, 0));
-        patientLine.getData().add(new XYChart.Data<>(patientVal, peakY));
+        patientLine.getData().add(new XYChart.Data<>(patientVal, patientMu));
 
-        chart.getData().addAll(series, patientLine);
+        chart.getData().addAll(seriesMu, patientLine);
     }
 
     private void saveHistory(int age, double bmi, int hi, int lo, int chol, InferenceEngine.DiagnosisResult res) {
@@ -186,22 +188,23 @@ public class PatientController {
     @FXML
     private void handleExportPdf() {
         try {
-            String fname = "Laporan_" + System.currentTimeMillis() + ".pdf";
+            String fname = "Laporan_Hybrid_" + System.currentTimeMillis() + ".pdf";
             PdfWriter writer = new PdfWriter(fname);
             PdfDocument pdf = new PdfDocument(writer);
             Document doc = new Document(pdf);
             
-            doc.add(new Paragraph("LAPORAN ANALISIS JANTUNG").setBold().setFontSize(18).setTextAlignment(TextAlignment.CENTER));
+            doc.add(new Paragraph("LAPORAN DIAGNOSIS JANTUNG (HYBRID SYSTEM)").setBold().setFontSize(18).setTextAlignment(TextAlignment.CENTER));
             doc.add(new Paragraph("------------------------------------------------"));
             doc.add(new Paragraph("Nama Pasien: " + UserSession.name));
-            doc.add(new Paragraph("Hasil Analisis: " + lblResultLevel.getText()).setBold());
+            doc.add(new Paragraph("Tingkat Risiko: " + lblResultLevel.getText()).setBold());
             doc.add(new Paragraph("Rekomendasi: \n" + txtRecommendation.getText()));
             doc.add(new AreaBreak());
-            doc.add(new Paragraph("LOGIKA MATEMATIS (DATA DRIVEN):").setBold());
-            doc.add(new Paragraph(currentLog).setFontSize(10));
+            
+            doc.add(new Paragraph("DETAIL PERHITUNGAN (HYBRID FUZZY + CRISP):").setBold());
+            doc.add(new Paragraph(currentCalcLog).setFontSize(9).setFontFamily("Courier"));
             
             doc.close();
-            new Alert(Alert.AlertType.INFORMATION, "PDF Tersimpan: " + fname).show();
+            new Alert(Alert.AlertType.INFORMATION, "PDF Laporan Tersimpan: " + fname).show();
         } catch (Exception e) {}
     }
 
@@ -209,7 +212,7 @@ public class PatientController {
     private void handleExportImage() {
         try {
             WritableImage image = resultBox.snapshot(new SnapshotParameters(), null);
-            File file = new File("Laporan_" + System.currentTimeMillis() + ".png");
+            File file = new File("Result_Hybrid_" + System.currentTimeMillis() + ".png");
             ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", file);
             new Alert(Alert.AlertType.INFORMATION, "Gambar Tersimpan: " + file.getName()).show();
         } catch (Exception e) {}

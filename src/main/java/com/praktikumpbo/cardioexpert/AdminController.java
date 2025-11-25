@@ -49,13 +49,11 @@ public class AdminController implements Initializable {
     @FXML
     private void toggleSidebar() {
         TranslateTransition transition = new TranslateTransition(Duration.millis(300), sidebar);
-        
         if (isSidebarOpen) {
             transition.setToX(-SIDEBAR_WIDTH);
         } else {
             transition.setToX(0);
         }
-        
         transition.play();
         isSidebarOpen = !isSidebarOpen;
     }
@@ -130,7 +128,7 @@ public class AdminController implements Initializable {
                 InferenceEngine.means.clear();
                 InferenceEngine.stdDevs.clear();
                 InferenceEngine.weights.clear();
-                InferenceEngine.j48Rules = "Model belum dilatih.";
+                InferenceEngine.j48Rules = "Model Legacy belum dilatih.";
                 
                 lblTotalData.setText("0");
                 lblHighRisk.setText("0");
@@ -218,15 +216,15 @@ public class AdminController implements Initializable {
     private void plotGaussian(LineChart<Number, Number> chart, double mean, double std) {
         chart.getData().clear();
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
-        series.setName("Populasi");
+        series.setName("Fungsi Keanggotaan");
 
         double minX = mean - 3.5 * std;
         double maxX = mean + 3.5 * std;
         double step = (maxX - minX) / 50;
 
         for (double x = minX; x <= maxX; x += step) {
-            double y = (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
-            series.getData().add(new XYChart.Data<>(x, y));
+            double mu = Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
+            series.getData().add(new XYChart.Data<>(x, mu));
         }
         chart.getData().add(series);
     }
