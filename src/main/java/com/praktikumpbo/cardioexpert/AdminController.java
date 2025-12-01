@@ -49,11 +49,13 @@ public class AdminController implements Initializable {
     @FXML
     private void toggleSidebar() {
         TranslateTransition transition = new TranslateTransition(Duration.millis(300), sidebar);
+        
         if (isSidebarOpen) {
             transition.setToX(-SIDEBAR_WIDTH);
         } else {
             transition.setToX(0);
         }
+        
         transition.play();
         isSidebarOpen = !isSidebarOpen;
     }

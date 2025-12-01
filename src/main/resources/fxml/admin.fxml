@@ -22,7 +22,7 @@
         
         <HBox alignment="CENTER_LEFT" styleClass="header-bar">
             <Button mnemonicParsing="false" onAction="#toggleSidebar" style="-fx-background-color: transparent; -fx-font-size: 18px; -fx-cursor: hand;" text="☰" />
-            <Label styleClass="page-title" text="Medical Intelligence Dashboard (Hybrid System)">
+            <Label styleClass="page-title" text="Expert System Dashboard (Hybrid Method)">
                 <HBox.margin>
                     <Insets left="15.0" />
                 </HBox.margin>

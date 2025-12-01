@@ -20,14 +20,16 @@
 
 <StackPane prefHeight="800.0" prefWidth="1280.0" xmlns="http://javafx.com/javafx/19" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.praktikumpbo.cardioexpert.PatientController">
     
-    <HBox styleClass="root">
+    <HBox fx:id="rootBox" styleClass="root">
         
         <VBox minWidth="350.0" prefWidth="350.0" spacing="15" styleClass="card-pane">
             <padding><Insets bottom="30" left="30" right="80" top="30" /></padding>
-            <HBox>
-                <Label styleClass="title-label" text="Formulir Konsultasi" />
+            
+            <HBox alignment="CENTER_LEFT" spacing="10">
+                <Label styleClass="title-label" text="Konsultasi Pakar" />
                 <Region HBox.hgrow="ALWAYS" />
-                <Button fx:id="btnBackAdmin" onAction="#handleBackAdmin" styleClass="button-secondary" text="&lt; Kembali" visible="false" />
+                <Button fx:id="btnHistory" onAction="#handleShowHistory" styleClass="button-action" text="Riwayat Saya" />
+                <Button fx:id="btnBackAdmin" onAction="#handleBackAdmin" styleClass="button-secondary" text="&lt; Admin" visible="false" />
             </HBox>
             
             <HBox spacing="10">
@@ -86,14 +88,14 @@
                 <CheckBox fx:id="chkActive" text="Aktif Fisik" />
             </HBox>
 
-            <Button maxWidth="Infinity" onAction="#handleDiagnose" styleClass="button-primary" text="ANALISIS RISIKO" />
-            <Button maxWidth="Infinity" onAction="#handleLogout" styleClass="button-secondary" text="Keluar" />
+            <Button maxWidth="Infinity" onAction="#handleDiagnose" styleClass="button-primary" text="ANALISIS SISTEM PAKAR" />
+            <Button fx:id="btnLogout" maxWidth="Infinity" onAction="#handleLogout" styleClass="button-secondary" text="Keluar" />
         </VBox>
 
         <VBox fx:id="resultBox" visible="false" HBox.hgrow="ALWAYS">
             <padding><Insets bottom="30" left="30" right="30" top="30" /></padding>
             <VBox spacing="15" styleClass="card-pane" VBox.vgrow="ALWAYS">
-                <Label styleClass="title-label" text="Hasil Analisis Sistem" />
+                <Label styleClass="title-label" text="Hasil Analisis Sistem Pakar" />
                 
                 <VBox alignment="CENTER" spacing="10" styleClass="result-box">
                     <Label style="-fx-font-size: 14px;" text="Prediksi Risiko:" />
@@ -104,7 +106,7 @@
                 <TextArea fx:id="txtRecommendation" editable="false" wrapText="true" VBox.vgrow="ALWAYS" />
 
                 <HBox spacing="10">
-                    <Button maxWidth="Infinity" onAction="#toggleDrawer" styleClass="button-secondary" text="Rincian XAI (Log &amp; Grafik)" HBox.hgrow="ALWAYS" />
+                    <Button maxWidth="Infinity" onAction="#toggleDrawer" styleClass="button-secondary" text="Rincian Logika Sistem" HBox.hgrow="ALWAYS" />
                     <Button maxWidth="Infinity" onAction="#handleExportPdf" styleClass="button-primary" text="Ekspor PDF" HBox.hgrow="ALWAYS" />
                     <Button maxWidth="Infinity" onAction="#handleExportImage" styleClass="button-primary" text="Simpan Gambar" HBox.hgrow="ALWAYS" />
                 </HBox>
@@ -113,13 +115,13 @@
     </HBox>
 
     <VBox fx:id="drawer" maxWidth="600" styleClass="drawer-pane" translateX="600" StackPane.alignment="CENTER_RIGHT">
-        <Label style="-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 16px;" text="Detail Explainable AI (XAI)" />
+        <Label style="-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 16px;" text="Detail Inferensi Sistem Pakar" />
         
         <TabPane style="-fx-background-color: white; -fx-background-radius: 5;" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
             <Tab text="Log Perhitungan">
                 <TextArea fx:id="txtLog" editable="false" style="-fx-font-family: 'Consolas';" />
             </Tab>
-            <Tab text="Daftar Aturan (Rule Base)">
+            <Tab text="Basis Aturan (Rule Base)">
                 <TextArea fx:id="txtRulesDesc" editable="false" style="-fx-font-family: 'Consolas';" />
             </Tab>
             <Tab text="Visualisasi Fuzzy">

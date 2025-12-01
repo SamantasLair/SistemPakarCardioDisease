@@ -158,23 +158,18 @@ public class InferenceEngine {
             double alpha = 0;
             String method = "";
 
-            // LOGIKA HYBRID: Pisahkan Continuous vs Categorical
             if (isContinuous(attr)) {
-                // CONTINUOUS: Gunakan Gaussian Fuzzy
                 double dbVal = inputVal; 
                 if(attr.equals("age")) dbVal = inputVal * 365; 
 
                 double mean = means.get(dbKey);
                 double std = stdDevs.get(dbKey);
                 
-                // Mu (Normal)
                 double mu = Math.exp(-0.5 * Math.pow((dbVal - mean) / std, 2));
-                // Alpha (Risiko/Abnormal)
                 alpha = 1.0 - mu;
                 method = String.format("Gaussian (Mean=%.1f, Std=%.1f)", (attr.equals("age")?mean/365:mean), (attr.equals("age")?std/365:std));
             
             } else {
-                // CATEGORICAL: Gunakan Crisp Mapping (Lookup Table)
                 alpha = getCrispRisk(attr, inputVal);
                 method = "Crisp Mapping (Tabel Risiko)";
             }
@@ -193,8 +188,11 @@ public class InferenceEngine {
                 rulesLog.append(String.format("IF %s = %.0f THEN RiskLevel = %.2f (Weight %.2f)\n", attr, inputVal, alpha, corrWeight));
             }
 
-            if (alpha > 0.7 && corrWeight > 0.05) {
-                rec.append("- Faktor ").append(attr).append(" terdeteksi berisiko tinggi.\n");
+            if (alpha > 0.6) {
+                String advice = getMedicalAdvice(attr, inputVal);
+                if (!advice.isEmpty()) {
+                    rec.append("• ").append(advice).append("\n");
+                }
             }
         }
 
@@ -215,9 +213,61 @@ public class InferenceEngine {
         else if (finalPercentage > 30) level = "RISIKO SEDANG";
         else level = "RISIKO RENDAH";
 
-        if (rec.length() == 0) rec.append("Kondisi kesehatan terpantau baik.");
+        if (rec.length() == 0) rec.append("Parameter vital Anda berada dalam batas normal. Pertahankan gaya hidup sehat.");
+        else rec.insert(0, "BERIKUT SARAN MEDIS BERDASARKAN HASIL ANALISIS:\n");
 
         return new DiagnosisResult(level, finalPercentage, rec.toString(), calcLog.toString(), rulesLog.toString());
+    }
+
+    private static String getMedicalAdvice(String attr, double val) {
+        double meanVal = means.getOrDefault(attr, 0.0);
+
+        switch (attr) {
+            case "ap_hi":
+                if (val > meanVal)
+                    return "Tekanan Darah Sistolik Tinggi (Hipertensi): Kurangi konsumsi garam/natrium, hindari stres, dan pantau tekanan darah rutin.";
+                else
+                    return "Tekanan Darah Sistolik Rendah (Hipotensi): Pastikan hidrasi cukup dan konsultasi jika sering pusing.";
+            
+            case "ap_lo":
+                if (val > meanVal)
+                    return "Tekanan Darah Diastolik Tinggi: Waspada risiko beban kerja jantung. Konsultasikan dengan dokter untuk manajemen tensi.";
+                else
+                    return "Tekanan Darah Diastolik Rendah: Biasanya tidak berbahaya kecuali disertai gejala pusing/lemas.";
+
+            case "cholesterol":
+                return (val == 3) ? "Kolesterol Sangat Tinggi: Risiko penyumbatan arteri. Hindari lemak jenuh (gorengan/santan) dan segera cek profil lipid lengkap." 
+                                  : "Kolesterol Diatas Normal: Mulai kurangi makanan berlemak dan tingkatkan asupan serat.";
+            
+            case "gluc":
+                return (val == 3) ? "Gula Darah Sangat Tinggi: Indikasi kuat Diabetes. Segera lakukan tes HbA1c dan konsultasi ke dokter penyakit dalam."
+                                  : "Gula Darah Diatas Normal: Kurangi asupan gula/karbohidrat sederhana dan perbanyak aktivitas fisik.";
+            
+            case "smoke":
+                return "Perokok Aktif: Merokok adalah faktor risiko utama kerusakan pembuluh darah jantung. Sangat disarankan untuk berhenti.";
+            
+            case "alco":
+                return "Konsumsi Alkohol: Batasi atau hentikan konsumsi alkohol untuk menjaga kesehatan otot jantung dan liver.";
+            
+            case "weight":
+                if (val > meanVal) {
+                    return "Berat Badan Berlebih (Overweight): Meningkatkan beban kerja jantung. Disarankan diet defisit kalori dan olahraga teratur.";
+                } else {
+                    return "Berat Badan Kurang (Underweight): Terlalu rendah dari statistik normal. Pastikan asupan nutrisi mencukupi.";
+                }
+
+            case "height":
+                return ""; 
+            
+            case "active":
+                return "Kurang Aktivitas Fisik: Gaya hidup sedenter meningkatkan risiko kardiovaskular. Usahakan jalan kaki minimal 30 menit sehari.";
+            
+            case "age":
+                return "Faktor Usia: Risiko meningkat seiring usia. Lakukan medical check-up rutin minimal 6 bulan sekali.";
+            
+            default:
+                return "";
+        }
     }
 
     private static boolean isContinuous(String attr) {
@@ -230,22 +280,22 @@ public class InferenceEngine {
         switch (attr) {
             case "cholesterol":
             case "gluc":
-                if (v == 1) return 0.0;      // Normal
-                if (v == 2) return 0.5;      // Above Normal
-                if (v == 3) return 1.0;      // High
+                if (v == 1) return 0.0;      
+                if (v == 2) return 0.6;      
+                if (v == 3) return 1.0;      
                 break;
             case "smoke":
             case "alco":
-                if (v == 0) return 0.0;      // No
-                if (v == 1) return 1.0;      // Yes
+                if (v == 0) return 0.0;      
+                if (v == 1) return 1.0;      
                 break;
             case "active":
-                if (v == 1) return 0.0;      // Active (Good)
-                if (v == 0) return 1.0;      // Inactive (Bad)
+                if (v == 1) return 0.0;      
+                if (v == 0) return 1.0;     
                 break;
             case "gender":
-                if (v == 1) return 0.0;      // Female (Lower Risk Baseline)
-                if (v == 2) return 0.5;      // Male (Higher Risk Baseline)
+                if (v == 1) return 0.0;      
+                if (v == 2) return 0.3;      
                 break;
         }
         return 0.0;
@@ -280,6 +330,24 @@ public class InferenceEngine {
             this.recommendation = recommendation;
             this.calcLog = calcLog;
             this.rulesActive = rulesActive;
+        }
+    }
+    
+    public static void updateVariableStandard(String attr, double newMean, double newStd) {
+        try (Connection conn = DBConnect.getConnection()) {
+            String sql = "UPDATE fuzzy_stats_v2 SET mean_val=?, std_dev=? WHERE attribute_name=?";
+            PreparedStatement ps = conn.prepareStatement(sql);
+            ps.setDouble(1, newMean);
+            ps.setDouble(2, newStd);
+            ps.setString(3, attr);
+            int affected = ps.executeUpdate();
+            
+            if (affected > 0) {
+                means.put(attr, newMean);
+                stdDevs.put(attr, newStd);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
