@@ -1,5 +1,8 @@
 package com.praktikumpbo.cardioexpert;
 
+import com.itextpdf.io.font.constants.StandardFonts;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
@@ -174,8 +177,8 @@ public class PatientController {
             task.setOnFailed(e -> {
                 btnDiagnose.setDisable(false);
                 btnDiagnose.setText("ANALISIS SISTEM PAKAR");
-                new Alert(Alert.AlertType.ERROR, "Gagal koneksi database.").show();
-                task.getException().printStackTrace();
+                new Alert(Alert.AlertType.ERROR, "Gagal koneksi database atau error pada sistem inferensi.").show();
+                e.getSource().getException().printStackTrace();
             });
 
             new Thread(task).start();
@@ -261,17 +264,25 @@ public class PatientController {
             PdfWriter writer = new PdfWriter(fname);
             PdfDocument pdf = new PdfDocument(writer);
             Document doc = new Document(pdf);
-            doc.add(new Paragraph("LAPORAN DIAGNOSIS JANTUNG (EXPERT SYSTEM)").setBold().setFontSize(18).setTextAlignment(TextAlignment.CENTER));
+            
+            PdfFont fontBold = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
+            PdfFont fontMono = PdfFontFactory.createFont(StandardFonts.COURIER);
+
+            doc.add(new Paragraph("LAPORAN DIAGNOSIS JANTUNG (EXPERT SYSTEM)")
+                    .setFont(fontBold).setFontSize(18).setTextAlignment(TextAlignment.CENTER));
             doc.add(new Paragraph("------------------------------------------------"));
             doc.add(new Paragraph("Nama Pasien: " + UserSession.name));
-            doc.add(new Paragraph("Tingkat Risiko: " + lblResultLevel.getText()).setBold());
+            doc.add(new Paragraph("Tingkat Risiko: " + lblResultLevel.getText()).setFont(fontBold));
             doc.add(new Paragraph("Rekomendasi: \n" + txtRecommendation.getText()));
             doc.add(new AreaBreak());
-            doc.add(new Paragraph("DETAIL PERHITUNGAN (HYBRID FUZZY + CRISP):").setBold());
-            doc.add(new Paragraph(currentCalcLog).setFontSize(9).setFontFamily("Courier"));
+            doc.add(new Paragraph("DETAIL PERHITUNGAN (HYBRID FUZZY + CRISP):").setFont(fontBold));
+            doc.add(new Paragraph(currentCalcLog).setFontSize(9).setFont(fontMono));
             doc.close();
             new Alert(Alert.AlertType.INFORMATION, "PDF Laporan Tersimpan: " + fname).show();
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            new Alert(Alert.AlertType.ERROR, "Gagal ekspor PDF: " + e.getMessage()).show();
+            e.printStackTrace();
+        }
     }
 
     @FXML
@@ -281,7 +292,9 @@ public class PatientController {
             File file = new File("Result_Expert_" + System.currentTimeMillis() + ".png");
             ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", file);
             new Alert(Alert.AlertType.INFORMATION, "Gambar Tersimpan: " + file.getName()).show();
-        } catch (Exception e) {}
+        } catch (Exception e) {
+             new Alert(Alert.AlertType.ERROR, "Gagal simpan gambar: " + e.getMessage()).show();
+        }
     }
     
     @FXML 

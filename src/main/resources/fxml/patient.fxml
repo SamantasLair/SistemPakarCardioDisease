@@ -88,7 +88,7 @@
                 <CheckBox fx:id="chkActive" text="Aktif Fisik" />
             </HBox>
 
-            <Button maxWidth="Infinity" onAction="#handleDiagnose" styleClass="button-primary" text="ANALISIS SISTEM PAKAR" />
+            <Button fx:id="btnDiagnose" maxWidth="Infinity" onAction="#handleDiagnose" styleClass="button-primary" text="ANALISIS SISTEM PAKAR" />
             <Button fx:id="btnLogout" maxWidth="Infinity" onAction="#handleLogout" styleClass="button-secondary" text="Keluar" />
         </VBox>
 

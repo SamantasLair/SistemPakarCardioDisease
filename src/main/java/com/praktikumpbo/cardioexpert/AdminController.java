@@ -21,8 +21,12 @@ import javafx.scene.control.TextArea;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class AdminController implements Initializable {
+
+    private static final Logger logger = LoggerFactory.getLogger(AdminController.class);
 
     @FXML private Label lblTotalData, lblHighRisk, lblRiskPercent;
     @FXML private BarChart<Number, String> chartRiskDist; 
@@ -38,24 +42,24 @@ public class AdminController implements Initializable {
 
     @Override
     public void initialize(URL url, ResourceBundle rb) {
+        logger.info("[ADMIN] Membuka halaman Dashboard Admin.");
         sidebar.setTranslateX(-SIDEBAR_WIDTH);
         
-        InferenceEngine.loadSystem();
-        txtTree.setText(InferenceEngine.j48Rules);
-        loadAnalytics();
-        plotFuzzyGraphs();
+        try {
+            InferenceEngine.loadSystem();
+            txtTree.setText(InferenceEngine.j48Rules);
+            loadAnalytics();
+            plotFuzzyGraphs();
+        } catch (Exception e) {
+            logger.error("[ADMIN] Error saat inisialisasi Dashboard", e);
+        }
     }
 
     @FXML
     private void toggleSidebar() {
         TranslateTransition transition = new TranslateTransition(Duration.millis(300), sidebar);
-        
-        if (isSidebarOpen) {
-            transition.setToX(-SIDEBAR_WIDTH);
-        } else {
-            transition.setToX(0);
-        }
-        
+        if (isSidebarOpen) transition.setToX(-SIDEBAR_WIDTH);
+        else transition.setToX(0);
         transition.play();
         isSidebarOpen = !isSidebarOpen;
     }
@@ -69,17 +73,8 @@ public class AdminController implements Initializable {
         }
     }
 
-    @FXML
-    private void handleDashboardOverview() {
-        closeSidebar();
-    }
-    
-    @FXML
-    private void handleOutsideClick() {
-        if (isSidebarOpen) {
-            closeSidebar();
-        }
-    }
+    @FXML private void handleDashboardOverview() { closeSidebar(); }
+    @FXML private void handleOutsideClick() { if (isSidebarOpen) closeSidebar(); }
 
     @FXML
     private void toggleDrawer() {
@@ -97,14 +92,21 @@ public class AdminController implements Initializable {
         fc.setTitle("Pilih File CSV");
         File file = fc.showOpenDialog(null);
         if (file != null) {
+            logger.info("[ADMIN] User memilih file CSV: {}", file.getAbsolutePath());
+            
             CsvLoader.loadCsvToDb(file.getAbsolutePath());
             try {
+                logger.info("[ADMIN] Memulai training ulang sistem...");
                 InferenceEngine.trainSystem(file.getAbsolutePath());
+                
                 txtTree.setText(InferenceEngine.j48Rules);
                 loadAnalytics();
                 plotFuzzyGraphs();
+                
                 new Alert(Alert.AlertType.INFORMATION, "Import dan Training Berhasil!").show();
+                logger.info("[ADMIN] Import dan Training Selesai.");
             } catch (Exception e) {
+                logger.error("[ADMIN] Pelatihan Gagal", e);
                 txtTree.setText("Pelatihan Gagal: " + e.getMessage());
             }
         }
@@ -120,6 +122,7 @@ public class AdminController implements Initializable {
 
         Optional<ButtonType> result = alert.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
+            logger.warn("[ADMIN] User melakukan RESET DATABASE.");
             try (Connection conn = DBConnect.getConnection();
                  Statement stmt = conn.createStatement()) {
                 
@@ -143,19 +146,19 @@ public class AdminController implements Initializable {
                 txtTree.setText("");
                 
                 new Alert(Alert.AlertType.INFORMATION, "Sistem berhasil direset.").show();
+                logger.info("[ADMIN] Reset Berhasil.");
                 
             } catch (Exception e) {
+                logger.error("[ADMIN] Gagal Reset", e);
                 new Alert(Alert.AlertType.ERROR, "Gagal reset: " + e.getMessage()).show();
             }
         }
     }
 
-    @FXML
-    private void handleSimulation() throws IOException {
-        App.setRoot("patient");
-    }
+    @FXML private void handleSimulation() throws IOException { App.setRoot("patient"); }
 
     private void loadAnalytics() {
+        logger.debug("[ADMIN] Memuat data analitik dashboard...");
         try (Connection conn = DBConnect.getConnection();
              Statement stmt = conn.createStatement()) {
 
@@ -167,29 +170,30 @@ public class AdminController implements Initializable {
                 highRisk = rs.getInt(2);
                 lblTotalData.setText(String.format("%,d", total));
                 lblHighRisk.setText(String.format("%,d", highRisk));
+                logger.debug("[ADMIN] Stats: Total={}, HighRisk={}", total, highRisk);
             }
 
             double percent = (total > 0) ? ((double)highRisk / total * 100) : 0;
             lblRiskPercent.setText(String.format("%.1f%%", percent));
 
+            // Chart Risk
             rs = stmt.executeQuery("SELECT cardio, COUNT(*) FROM dataset_cardio GROUP BY cardio");
             XYChart.Series<Number, String> seriesRisk = new XYChart.Series<>();
             seriesRisk.setName("Jumlah Pasien");
             
             int healthyCount = 0;
             int sickCount = 0;
-            
             while (rs.next()) {
                 if (rs.getInt(1) == 0) healthyCount = rs.getInt(2);
                 else sickCount = rs.getInt(2);
             }
-            
             seriesRisk.getData().add(new XYChart.Data<>(sickCount, "Berisiko"));
             seriesRisk.getData().add(new XYChart.Data<>(healthyCount, "Sehat"));
             
             chartRiskDist.getData().clear();
             chartRiskDist.getData().add(seriesRisk);
 
+            // Chart Age
             rs = stmt.executeQuery("SELECT FLOOR(age_days/365/10)*10 as d, SUM(cardio) FROM dataset_cardio GROUP BY d ORDER BY d");
             XYChart.Series<String, Number> seriesAge = new XYChart.Series<>();
             seriesAge.setName("Kasus");
@@ -199,26 +203,45 @@ public class AdminController implements Initializable {
             barChartAge.getData().clear();
             barChartAge.getData().add(seriesAge);
 
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            logger.error("[ADMIN] Gagal memuat analitik", e);
+        }
     }
 
     private void plotFuzzyGraphs() {
-        if (InferenceEngine.means.isEmpty()) return;
+        logger.debug("[ADMIN] Memplot grafik fuzzy...");
+        if (InferenceEngine.means.isEmpty()) {
+            logger.warn("[ADMIN] DATA KOSONG! InferenceEngine.means belum terisi. Grafik tidak akan muncul.");
+            return;
+        }
         
-        plotGaussian(chartFuzzyBP, InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"));
+        plotGaussian(chartFuzzyBP, InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"), "Tensi (mmHg)");
         
         String ageKey = InferenceEngine.means.containsKey("age") ? "age" : "age_days";
         double meanAge = InferenceEngine.means.getOrDefault(ageKey, 0.0);
         double stdAge = InferenceEngine.stdDevs.getOrDefault(ageKey, 1.0);
-        plotGaussian(chartFuzzyAge, meanAge / 365.0, stdAge / 365.0);
         
-        plotGaussian(chartFuzzyWeight, InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"));
+        // Fix: Pastikan unit umur benar (tahun vs hari)
+        if (meanAge > 200) { 
+            meanAge /= 365.0; 
+            stdAge /= 365.0; 
+        }
+        
+        plotGaussian(chartFuzzyAge, meanAge, stdAge, "Umur (Tahun)");
+        plotGaussian(chartFuzzyWeight, InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"), "Berat (Kg)");
     }
 
-    private void plotGaussian(LineChart<Number, Number> chart, double mean, double std) {
+    private void plotGaussian(LineChart<Number, Number> chart, Double mean, Double std, String label) {
+        if (mean == null || std == null) {
+            logger.warn("[ADMIN] Nilai NULL untuk grafik {}", label);
+            return;
+        }
+        
+        logger.debug("[ADMIN] Plotting {}: Mean={}, Std={}", label, mean, std);
+        
         chart.getData().clear();
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
-        series.setName("Fungsi Keanggotaan");
+        series.setName("Distribusi Normal");
 
         double minX = mean - 3.5 * std;
         double maxX = mean + 3.5 * std;

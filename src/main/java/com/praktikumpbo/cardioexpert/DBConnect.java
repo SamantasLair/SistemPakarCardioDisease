@@ -15,6 +15,7 @@ public class DBConnect {
                 try (InputStream input = DBConnect.class.getResourceAsStream("/config.properties")) {
                     props.load(input);
                 }
+                Class.forName("com.mysql.cj.jdbc.Driver");
                 conn = DriverManager.getConnection(
                     props.getProperty("db.url"), 
                     props.getProperty("db.user"), 

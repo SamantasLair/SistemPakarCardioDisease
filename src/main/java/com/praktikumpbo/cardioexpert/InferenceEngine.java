@@ -5,11 +5,16 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import weka.attributeSelection.CorrelationAttributeEval;
 import weka.classifiers.trees.J48;
 import weka.core.AttributeStats;
+import weka.core.Instance;
 import weka.core.Instances;
 import weka.core.converters.CSVLoader;
 import weka.filters.Filter;
@@ -18,12 +23,16 @@ import weka.filters.unsupervised.attribute.Remove;
 
 public class InferenceEngine {
 
+    private static final Logger logger = LoggerFactory.getLogger(InferenceEngine.class);
+
     public static Map<String, Double> means = new HashMap<>();
     public static Map<String, Double> stdDevs = new HashMap<>();
     public static Map<String, Double> weights = new HashMap<>();
     public static String j48Rules = "Model Legacy J48 belum dilatih.";
 
     public static void trainSystem(String csvPath) throws Exception {
+        logger.info("[TRAIN] Initiating system training from: {}", csvPath);
+        
         CSVLoader loader = new CSVLoader();
         loader.setSource(new File(csvPath));
         loader.setFieldSeparator(";");
@@ -32,32 +41,50 @@ public class InferenceEngine {
         if (data.classIndex() == -1)
             data.setClassIndex(data.numAttributes() - 1);
 
+        logger.info("[TRAIN] Dataset loaded. Instances: {}", data.numInstances());
+        
         calculateStatisticsAndWeights(data);
         trainJ48(data); 
     }
     
     public static void loadSystem() {
+        logger.info("[SYSTEM] Loading fuzzy parameters and statistics from DB...");
         try (Connection conn = DBConnect.getConnection()) {
             means.clear(); stdDevs.clear(); weights.clear();
             
             ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM fuzzy_stats_v2");
+            int count = 0;
             while (rs.next()) {
                 String attr = rs.getString("attribute_name");
-                means.put(attr, rs.getDouble("mean_val"));
-                stdDevs.put(attr, rs.getDouble("std_dev"));
-                weights.put(attr, rs.getDouble("weight_factor"));
+                double m = rs.getDouble("mean_val");
+                double s = rs.getDouble("std_dev");
+                double w = rs.getDouble("weight_factor");
+                
+                means.put(attr, m);
+                stdDevs.put(attr, s);
+                weights.put(attr, w);
+                count++;
             }
+            logger.info("[SYSTEM] Parameters loaded: {}", count);
 
             rs = conn.createStatement().executeQuery("SELECT * FROM ai_models WHERE model_type='J48' ORDER BY id DESC LIMIT 1");
             if (rs.next()) {
                 j48Rules = rs.getString("rules_text");
             }
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            logger.error("[SYSTEM] Failed to load system", e);
+        }
     }
 
     private static void calculateStatisticsAndWeights(Instances data) throws Exception {
         CorrelationAttributeEval eval = new CorrelationAttributeEval();
-        eval.buildEvaluator(data);
+        boolean wekaAvailable = false;
+        try {
+            eval.buildEvaluator(data);
+            wekaAvailable = true;
+        } catch (Throwable t) { 
+            logger.warn("[STATS] Weka Native Library failed. Switching to Manual Pearson Correlation.");
+        }
 
         try (Connection conn = DBConnect.getConnection()) {
             Statement stmt = conn.createStatement();
@@ -70,13 +97,30 @@ public class InferenceEngine {
                 if (i == data.classIndex()) continue;
 
                 String attrName = data.attribute(i).name();
-                AttributeStats stats = data.attributeStats(i);
-                double mean = stats.numericStats.mean;
-                double std = stats.numericStats.stdDev;
-                double weight = Math.abs(eval.evaluateAttribute(i));
+                double mean = 0.0;
+                double std = 1.0;
+                double weight = 0.0;
+
+                if (wekaAvailable) {
+                    try {
+                        weight = Math.abs(eval.evaluateAttribute(i));
+                    } catch (Exception ex) {
+                        weight = calculateSimpleCorrelation(data, i, data.classIndex());
+                    }
+                } else {
+                    weight = calculateSimpleCorrelation(data, i, data.classIndex());
+                }
+
+                if (data.attribute(i).isNumeric()) {
+                    AttributeStats stats = data.attributeStats(i);
+                    if (stats.numericStats != null) {
+                        mean = stats.numericStats.mean;
+                        std = stats.numericStats.stdDev;
+                    }
+                }
 
                 if (Double.isNaN(mean)) mean = 0;
-                if (Double.isNaN(std)) std = 1;
+                if (Double.isNaN(std) || std == 0) std = 1;
 
                 ps.setString(1, attrName);
                 ps.setDouble(2, mean);
@@ -90,35 +134,62 @@ public class InferenceEngine {
         }
     }
 
+    private static double calculateSimpleCorrelation(Instances data, int attrIndex, int classIndex) {
+        double sumX = 0, sumY = 0, sumXY = 0;
+        double sumX2 = 0, sumY2 = 0;
+        int n = data.numInstances();
+
+        for (int i = 0; i < n; i++) {
+            Instance inst = data.instance(i);
+            double x = inst.value(attrIndex);
+            double y = inst.value(classIndex);
+
+            sumX += x;
+            sumY += y;
+            sumXY += (x * y);
+            sumX2 += (x * x);
+            sumY2 += (y * y);
+        }
+
+        double numerator = (n * sumXY) - (sumX * sumY);
+        double denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+
+        if (denominator == 0) return 0.001;
+        return Math.abs(numerator / denominator);
+    }
+
     private static void trainJ48(Instances dataRaw) throws Exception {
-        Remove remove = new Remove();
-        remove.setAttributeIndices("1"); 
-        remove.setInputFormat(dataRaw);
-        Instances dataNoID = Filter.useFilter(dataRaw, remove);
+        try {
+            Remove remove = new Remove();
+            remove.setAttributeIndices("1"); 
+            remove.setInputFormat(dataRaw);
+            Instances dataNoID = Filter.useFilter(dataRaw, remove);
 
-        NumericToNominal convert = new NumericToNominal();
-        convert.setAttributeIndices("last");
-        convert.setInputFormat(dataNoID);
-        Instances dataFinal = Filter.useFilter(dataNoID, convert);
-        dataFinal.setClassIndex(dataFinal.numAttributes() - 1);
+            NumericToNominal convert = new NumericToNominal();
+            convert.setAttributeIndices("last");
+            convert.setInputFormat(dataNoID);
+            Instances dataFinal = Filter.useFilter(dataNoID, convert);
+            dataFinal.setClassIndex(dataFinal.numAttributes() - 1);
 
-        J48 classifier = new J48();
-        classifier.setOptions(new String[]{"-C", "0.25", "-M", "2"});
-        classifier.buildClassifier(dataFinal);
-        
-        StringBuilder sb = new StringBuilder();
-        sb.append("=== LEGACY J48 DECISION TREE (REFERENSI SAJA) ===\n");
-        sb.append("Model ini tidak digunakan untuk perhitungan risiko aktif.\n");
-        sb.append("Hanya sebagai pembanding struktur keputusan statis.\n\n");
-        sb.append(classifier.toString());
-        j48Rules = sb.toString();
-        
-        try (Connection conn = DBConnect.getConnection()) {
-            String sql = "INSERT INTO ai_models (model_type, model_blob, rules_text) VALUES ('J48', ?, ?)";
-            PreparedStatement ps = conn.prepareStatement(sql);
-            ps.setBytes(1, new byte[0]); 
-            ps.setString(2, j48Rules);
-            ps.executeUpdate();
+            J48 classifier = new J48();
+            classifier.setOptions(new String[]{"-C", "0.25", "-M", "2"});
+            classifier.buildClassifier(dataFinal);
+            
+            StringBuilder sb = new StringBuilder();
+            sb.append("=== LEGACY J48 DECISION TREE ===\n");
+            sb.append(classifier.toString());
+            j48Rules = sb.toString();
+            
+            try (Connection conn = DBConnect.getConnection()) {
+                String sql = "INSERT INTO ai_models (model_type, model_blob, rules_text) VALUES ('J48', ?, ?)";
+                PreparedStatement ps = conn.prepareStatement(sql);
+                ps.setBytes(1, new byte[0]); 
+                ps.setString(2, j48Rules);
+                ps.executeUpdate();
+            }
+        } catch (Throwable t) {
+            logger.error("[J48] Failed to train J48: {}", t.getMessage());
+            j48Rules = "Training Failed: " + t.getMessage();
         }
     }
 
@@ -127,7 +198,7 @@ public class InferenceEngine {
         
         StringBuilder calcLog = new StringBuilder();
         StringBuilder rulesLog = new StringBuilder();
-        StringBuilder rec = new StringBuilder();
+        List<String> recommendations = new ArrayList<>();
 
         Map<String, Double> inputs = new HashMap<>();
         inputs.put("age", (double) ageY);
@@ -142,129 +213,139 @@ public class InferenceEngine {
         inputs.put("alco", (double) alco);
         inputs.put("active", (double) active);
 
-        calcLog.append("=== LANGKAH 1: HYBRID INFERENCE (GAUSSIAN & CRISP) ===\n");
-        calcLog.append("Metode: Sugeno Hybrid (Continuous -> Gaussian, Categorical -> Crisp)\n");
-        calcLog.append("Tujuan: Menghitung total risiko terbobot secara adil.\n\n");
+        calcLog.append("=== SYSTEM LOG: HYBRID INFERENCE ENGINE ===\n");
+        calcLog.append(String.format("Timestamp: %s\n", java.time.LocalDateTime.now()));
+        calcLog.append("----------------------------------------------------------------\n");
         
         double currentRiskSum = 0;
         double totalPossibleWeight = 0;
 
+        boolean isHypertensive = false;
+        boolean isObese = false;
+        boolean isDiabetic = (gluc == 3);
+        boolean isSmoker = (smoke == 1);
+        boolean highChol = (chol == 3);
+
+        rulesLog.append("=== TRIGGERED RULES FOR CURRENT PATIENT ===\n");
+
         for (String attr : inputs.keySet()) {
             String dbKey = attr.equals("age") ? "age_days" : attr; 
+            if (!weights.containsKey(dbKey) && weights.containsKey(attr)) dbKey = attr;
             if (!weights.containsKey(dbKey)) continue;
 
             double inputVal = inputs.get(attr);
             double corrWeight = weights.get(dbKey);
             double alpha = 0;
-            String method = "";
+            String condition = "NORMAL";
 
             if (isContinuous(attr)) {
-                double dbVal = inputVal; 
-                if(attr.equals("age")) dbVal = inputVal * 365; 
-
+                double dbVal = (attr.equals("age")) ? inputVal * 365 : inputVal;
                 double mean = means.get(dbKey);
                 double std = stdDevs.get(dbKey);
-                
-                double mu = Math.exp(-0.5 * Math.pow((dbVal - mean) / std, 2));
+                double z = (dbVal - mean) / std;
+                double mu = Math.exp(-0.5 * Math.pow(z, 2));
                 alpha = 1.0 - mu;
-                method = String.format("Gaussian (Mean=%.1f, Std=%.1f)", (attr.equals("age")?mean/365:mean), (attr.equals("age")?std/365:std));
-            
+                
+                if (attr.equals("ap_hi")) {
+                    if (inputVal >= 140) { condition = "> 140 (CRISIS)"; isHypertensive = true; alpha = 1.0; }
+                    else if (inputVal >= 130) { condition = "> 130 (STG 1)"; isHypertensive = true; alpha = 0.8; }
+                    else if (inputVal >= 120) { condition = "> 120 (ELEVATED)"; alpha = 0.5; }
+                } else if (attr.equals("ap_lo")) {
+                    if (inputVal >= 90) { condition = "> 90 (STG 2)"; isHypertensive = true; alpha = 1.0; }
+                    else if (inputVal >= 80) { condition = "> 80 (STG 1)"; isHypertensive = true; alpha = 0.8; }
+                } else if (attr.equals("weight")) {
+                    double bmi = weight / Math.pow(height / 100.0, 2);
+                    if (bmi >= 30) { condition = "BMI > 30 (OBESE)"; isObese = true; alpha = 1.0; }
+                    else if (bmi >= 25) { condition = "BMI > 25 (OVERWEIGHT)"; alpha = 0.6; }
+                }
+
             } else {
                 alpha = getCrispRisk(attr, inputVal);
-                method = "Crisp Mapping (Tabel Risiko)";
+                if (alpha >= 1.0) condition = "HIGH RISK";
+                else if (alpha >= 0.5) condition = "MODERATE RISK";
             }
             
-            double attributeRiskContribution = alpha * corrWeight;
-            currentRiskSum += attributeRiskContribution;
+            double contribution = alpha * corrWeight;
+            currentRiskSum += contribution;
             totalPossibleWeight += corrWeight;
 
-            calcLog.append(String.format("[VAR] %s = %.0f\n", attr, inputVal));
-            calcLog.append(String.format("   Metode: %s\n", method));
-            calcLog.append(String.format("   Bobot Korelasi (W) = %.4f\n", corrWeight));
-            calcLog.append(String.format("   Level Risiko (Alpha) = %.4f\n", alpha));
-            calcLog.append(String.format("   Kontribusi (Alpha * W) = %.4f\n\n", attributeRiskContribution));
+            calcLog.append(String.format("VAR: %-12s | Val: %-4.0f | Risk: %.2f | W: %.4f | Contrib: %.4f\n", attr.toUpperCase(), inputVal, alpha, corrWeight, contribution));
             
-            if(alpha > 0.1) {
-                rulesLog.append(String.format("IF %s = %.0f THEN RiskLevel = %.2f (Weight %.2f)\n", attr, inputVal, alpha, corrWeight));
-            }
-
-            if (alpha > 0.6) {
-                String advice = getMedicalAdvice(attr, inputVal);
-                if (!advice.isEmpty()) {
-                    rec.append("• ").append(advice).append("\n");
-                }
+            if (alpha > 0.4) {
+                rulesLog.append(String.format("IF %s IS %s THEN Risk += %.4f (Base W: %.4f)\n", attr.toUpperCase(), condition, contribution, corrWeight));
+                String advice = getMedicalAdvice(attr, inputVal, height);
+                if (!advice.isEmpty() && !recommendations.contains(advice)) recommendations.add(advice);
             }
         }
 
-        calcLog.append("=== LANGKAH 2: DEFUZZIFIKASI (NORMALIZED SUM) ===\n");
+        calcLog.append("----------------------------------------------------------------\n");
+
+        if (isHypertensive && isDiabetic) {
+            currentRiskSum *= 1.25; 
+            rulesLog.append("IF HYPERTENSION AND DIABETES THEN Multiply Score by 1.25 (Synergy)\n");
+            recommendations.add(0, "CRITICAL: The combination of Hypertension and High Glucose exponentially increases stroke risk.");
+        }
+        if (isSmoker && (isHypertensive || highChol)) {
+            currentRiskSum *= 1.20;
+            rulesLog.append("IF SMOKER AND (HYPERTENSION OR HIGH_CHOLESTEROL) THEN Multiply Score by 1.20\n");
+            recommendations.add(0, "CRITICAL: Smoking with cardiovascular conditions severely damages arteries.");
+        }
+
         double finalPercentage = 0;
         if (totalPossibleWeight > 0) {
-            calcLog.append(String.format("Total Risiko Terkumpul = %.4f\n", currentRiskSum));
-            calcLog.append(String.format("Total Bobot Maksimal   = %.4f\n", totalPossibleWeight));
-            
             finalPercentage = (currentRiskSum / totalPossibleWeight) * 100;
-            
-            calcLog.append(String.format("Persentase Akhir = (%.4f / %.4f) * 100 = %.2f%%\n", 
-                    currentRiskSum, totalPossibleWeight, finalPercentage));
         }
-        
+        if (finalPercentage > 100) finalPercentage = 100; 
+
+        calcLog.append(String.format("FINAL WEIGHTED SCORE : %.4f\n", currentRiskSum));
+        calcLog.append(String.format("RISK PERCENTAGE      : %.2f%%\n", finalPercentage));
+
         String level;
-        if (finalPercentage > 60) level = "RISIKO TINGGI";
-        else if (finalPercentage > 30) level = "RISIKO SEDANG";
+        if (finalPercentage >= 60) level = "RISIKO TINGGI";
+        else if (finalPercentage >= 30) level = "RISIKO SEDANG";
         else level = "RISIKO RENDAH";
 
-        if (rec.length() == 0) rec.append("Parameter vital Anda berada dalam batas normal. Pertahankan gaya hidup sehat.");
-        else rec.insert(0, "BERIKUT SARAN MEDIS BERDASARKAN HASIL ANALISIS:\n");
+        StringBuilder recString = new StringBuilder();
+        if (recommendations.isEmpty()) {
+            recString.append("Clinical parameters are within safe limits. Maintain a healthy lifestyle.");
+        } else {
+            recString.append("MEDICAL RECOMMENDATIONS (ACC/AHA/WHO GUIDELINES):\n");
+            for (String rec : recommendations) {
+                recString.append("• ").append(rec).append("\n");
+            }
+        }
 
-        return new DiagnosisResult(level, finalPercentage, rec.toString(), calcLog.toString(), rulesLog.toString());
+        return new DiagnosisResult(level, finalPercentage, recString.toString(), calcLog.toString(), rulesLog.toString());
     }
 
-    private static String getMedicalAdvice(String attr, double val) {
-        double meanVal = means.getOrDefault(attr, 0.0);
-
+    private static String getMedicalAdvice(String attr, double val, double height) {
         switch (attr) {
             case "ap_hi":
-                if (val > meanVal)
-                    return "Tekanan Darah Sistolik Tinggi (Hipertensi): Kurangi konsumsi garam/natrium, hindari stres, dan pantau tekanan darah rutin.";
-                else
-                    return "Tekanan Darah Sistolik Rendah (Hipotensi): Pastikan hidrasi cukup dan konsultasi jika sering pusing.";
-            
+                if (val >= 140) return "HYPERTENSIVE CRISIS (>140): Consult a doctor immediately.";
+                if (val >= 130) return "HYPERTENSION STAGE 1: Reduce sodium, manage stress, monitor BP daily.";
+                return "";
             case "ap_lo":
-                if (val > meanVal)
-                    return "Tekanan Darah Diastolik Tinggi: Waspada risiko beban kerja jantung. Konsultasikan dengan dokter untuk manajemen tensi.";
-                else
-                    return "Tekanan Darah Diastolik Rendah: Biasanya tidak berbahaya kecuali disertai gejala pusing/lemas.";
-
+                if (val >= 90) return "HIGH DIASTOLIC (>90): Heart is under severe stress even at rest.";
+                return "";
             case "cholesterol":
-                return (val == 3) ? "Kolesterol Sangat Tinggi: Risiko penyumbatan arteri. Hindari lemak jenuh (gorengan/santan) dan segera cek profil lipid lengkap." 
-                                  : "Kolesterol Diatas Normal: Mulai kurangi makanan berlemak dan tingkatkan asupan serat.";
-            
+                if (val == 3) return "DANGEROUS CHOLESTEROL: Avoid trans fats entirely. Check lipid profile.";
+                if (val == 2) return "ELEVATED CHOLESTEROL: Increase fiber intake and healthy fats.";
+                return "";
             case "gluc":
-                return (val == 3) ? "Gula Darah Sangat Tinggi: Indikasi kuat Diabetes. Segera lakukan tes HbA1c dan konsultasi ke dokter penyakit dalam."
-                                  : "Gula Darah Diatas Normal: Kurangi asupan gula/karbohidrat sederhana dan perbanyak aktivitas fisik.";
-            
+                if (val == 3) return "DIABETES INDICATION: Blood sugar is critically high. Consult an Endocrinologist.";
+                if (val == 2) return "PRE-DIABETES: Reduce simple sugars and processed carbs.";
+                return "";
             case "smoke":
-                return "Perokok Aktif: Merokok adalah faktor risiko utama kerusakan pembuluh darah jantung. Sangat disarankan untuk berhenti.";
-            
+                return "STOP SMOKING: Major cause of arterial damage.";
             case "alco":
-                return "Konsumsi Alkohol: Batasi atau hentikan konsumsi alkohol untuk menjaga kesehatan otot jantung dan liver.";
-            
+                return "LIMIT ALCOHOL: Excessive intake weakens heart muscle.";
             case "weight":
-                if (val > meanVal) {
-                    return "Berat Badan Berlebih (Overweight): Meningkatkan beban kerja jantung. Disarankan diet defisit kalori dan olahraga teratur.";
-                } else {
-                    return "Berat Badan Kurang (Underweight): Terlalu rendah dari statistik normal. Pastikan asupan nutrisi mencukupi.";
-                }
-
-            case "height":
-                return ""; 
-            
+                double bmi = val / Math.pow(height / 100.0, 2);
+                if (bmi >= 30) return String.format("OBESITY (BMI %.1f): Caloric deficit diet required.", bmi);
+                if (bmi >= 25) return String.format("OVERWEIGHT (BMI %.1f): Increase physical activity.", bmi);
+                return "";
             case "active":
-                return "Kurang Aktivitas Fisik: Gaya hidup sedenter meningkatkan risiko kardiovaskular. Usahakan jalan kaki minimal 30 menit sehari.";
-            
-            case "age":
-                return "Faktor Usia: Risiko meningkat seiring usia. Lakukan medical check-up rutin minimal 6 bulan sekali.";
-            
+                return "SEDENTARY LIFESTYLE: Aim for 30 mins of walking daily.";
             default:
                 return "";
         }
@@ -278,25 +359,14 @@ public class InferenceEngine {
     private static double getCrispRisk(String attr, double val) {
         int v = (int) val;
         switch (attr) {
-            case "cholesterol":
-            case "gluc":
-                if (v == 1) return 0.0;      
-                if (v == 2) return 0.6;      
-                if (v == 3) return 1.0;      
-                break;
-            case "smoke":
-            case "alco":
-                if (v == 0) return 0.0;      
-                if (v == 1) return 1.0;      
-                break;
-            case "active":
-                if (v == 1) return 0.0;      
-                if (v == 0) return 1.0;     
+            case "cholesterol": case "gluc":
+                if (v == 2) return 0.5; if (v == 3) return 1.0; break;
+            case "smoke": case "alco": case "active":
+                if (v == 1 && !attr.equals("active")) return 1.0; 
+                if (v == 0 && attr.equals("active")) return 1.0;
                 break;
             case "gender":
-                if (v == 1) return 0.0;      
-                if (v == 2) return 0.3;      
-                break;
+                if (v == 2) return 0.2; break;
         }
         return 0.0;
     }
@@ -304,17 +374,45 @@ public class InferenceEngine {
     public static String getFuzzyRulesDocumentation() {
         if (weights.isEmpty()) loadSystem();
         StringBuilder sb = new StringBuilder();
-        sb.append("BASIS PENGETAHUAN HYBRID (SUGENO)\n");
-        sb.append("=================================\n");
-        sb.append("1. Variabel Kontinu (Tensi, Usia, dll) -> Gaussian Fuzzy\n");
-        sb.append("2. Variabel Kategori (Rokok, Kolesterol) -> Crisp Mapping\n\n");
         
+        // SECTION 1: STATISTICAL WEIGHTS
+        sb.append("=== SECTION 1: STATISTICAL KNOWLEDGE BASE ===\n");
+        sb.append("Source: Dataset Pearson Correlation Analysis\n");
+        sb.append("---------------------------------------------\n");
         weights.entrySet().stream()
-               .sorted((k1, k2) -> k2.getValue().compareTo(k1.getValue()))
-               .forEach(e -> {
-                   sb.append(String.format("FAKTOR: %-12s | Bobot: %.4f\n", e.getKey(), e.getValue()));
-               });
+               .sorted((e1, e2) -> Double.compare(e2.getValue(), e1.getValue()))
+               .forEach(e -> sb.append(String.format("FACTOR: %-12s | Weight: %.4f\n", e.getKey(), e.getValue())));
+        
+        sb.append("\n");
+        
+        // SECTION 2: CLINICAL RULES
+        sb.append("=== SECTION 2: CLINICAL RULE BASE (ALL RULES) ===\n");
+        sb.append("Source: ACC/AHA & WHO Guidelines\n");
+        sb.append("---------------------------------------------\n");
+        sb.append(getStaticRulesDescription());
+
         return sb.toString();
+    }
+
+    private static String getStaticRulesDescription() {
+        return "1. BLOOD PRESSURE (ACC/AHA 2017):\n" +
+               "   - IF ap_hi >= 140 THEN Risk=1.0 (CRISIS)\n" +
+               "   - IF ap_hi >= 130 THEN Risk=0.8 (STAGE 1)\n" +
+               "   - IF ap_hi >= 120 THEN Risk=0.5 (ELEVATED)\n" +
+               "   - IF ap_lo >= 90  THEN Risk=1.0 (STAGE 2)\n" +
+               "   - IF ap_lo >= 80  THEN Risk=0.8 (STAGE 1)\n\n" +
+               "2. BMI / WEIGHT (WHO):\n" +
+               "   - IF BMI >= 30 THEN Risk=1.0 (OBESE)\n" +
+               "   - IF BMI >= 25 THEN Risk=0.6 (OVERWEIGHT)\n\n" +
+               "3. LAB RESULTS:\n" +
+               "   - IF Cholesterol=3 (Very High) THEN Risk=1.0\n" +
+               "   - IF Glucose=3 (Very High)     THEN Risk=1.0\n\n" +
+               "4. LIFESTYLE:\n" +
+               "   - IF Smoker=Yes THEN Risk=1.0\n" +
+               "   - IF Active=No  THEN Risk=1.0\n\n" +
+               "5. SYNERGISTIC RISKS (MULTIPLIERS):\n" +
+               "   - IF (Hypertension AND Diabetes) THEN Score *= 1.25\n" +
+               "   - IF (Smoker AND HeartCondition) THEN Score *= 1.20";
     }
 
     public static class DiagnosisResult {
@@ -330,24 +428,6 @@ public class InferenceEngine {
             this.recommendation = recommendation;
             this.calcLog = calcLog;
             this.rulesActive = rulesActive;
-        }
-    }
-    
-    public static void updateVariableStandard(String attr, double newMean, double newStd) {
-        try (Connection conn = DBConnect.getConnection()) {
-            String sql = "UPDATE fuzzy_stats_v2 SET mean_val=?, std_dev=? WHERE attribute_name=?";
-            PreparedStatement ps = conn.prepareStatement(sql);
-            ps.setDouble(1, newMean);
-            ps.setDouble(2, newStd);
-            ps.setString(3, attr);
-            int affected = ps.executeUpdate();
-            
-            if (affected > 0) {
-                means.put(attr, newMean);
-                stdDevs.put(attr, newStd);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
 }
