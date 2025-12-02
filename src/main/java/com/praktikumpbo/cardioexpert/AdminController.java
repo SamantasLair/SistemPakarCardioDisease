@@ -52,6 +52,7 @@ public class AdminController implements Initializable {
         try {
             InferenceEngine.loadSystem();
             loadAnalytics();
+            loadCachedMatrix();
             plotFuzzyGraphs();
         } catch (Exception e) {
             logger.error("[ADMIN] Error saat inisialisasi Dashboard", e);
@@ -85,35 +86,34 @@ public class AdminController implements Initializable {
         if (isDrawerOpen) transition.setToX(500); 
         else {
             transition.setToX(0);
-            calculateMatrix(); 
         }
         transition.play();
         isDrawerOpen = !isDrawerOpen;
     }
 
-    private void calculateMatrix() {
-        lblAccuracy.setText("Menghitung...");
+    private void loadCachedMatrix() {
         Task<EvaluationService.MatrixResult> task = new Task<>() {
             @Override
-            protected EvaluationService.MatrixResult call() throws Exception {
-                return EvaluationService.evaluateModel();
+            protected EvaluationService.MatrixResult call() {
+                return EvaluationService.getCachedOrCalculate();
             }
         };
 
-        task.setOnSucceeded(e -> {
-            EvaluationService.MatrixResult res = task.getValue();
-            lblTP.setText(String.valueOf(res.tp));
-            lblTN.setText(String.valueOf(res.tn));
-            lblFP.setText(String.valueOf(res.fp));
-            lblFN.setText(String.valueOf(res.fn));
-            
-            lblAccuracy.setText(String.format("%.1f%%", res.accuracy * 100));
-            lblPrecision.setText(String.format("%.1f%%", res.precision * 100));
-            lblRecall.setText(String.format("%.1f%%", res.recall * 100));
-            lblF1.setText(String.format("%.1f%%", res.f1 * 100));
-        });
-        
+        task.setOnSucceeded(e -> updateMatrixUI(task.getValue()));
         new Thread(task).start();
+    }
+    
+    private void updateMatrixUI(EvaluationService.MatrixResult res) {
+        if (res == null) return;
+        lblTP.setText(String.valueOf(res.tp));
+        lblTN.setText(String.valueOf(res.tn));
+        lblFP.setText(String.valueOf(res.fp));
+        lblFN.setText(String.valueOf(res.fn));
+        
+        lblAccuracy.setText(String.format("%.1f%%", res.accuracy * 100));
+        lblPrecision.setText(String.format("%.1f%%", res.precision * 100));
+        lblRecall.setText(String.format("%.1f%%", res.recall * 100));
+        lblF1.setText(String.format("%.1f%%", res.f1 * 100));
     }
 
     @FXML
@@ -125,17 +125,30 @@ public class AdminController implements Initializable {
         if (file != null) {
             logger.info("[ADMIN] User memilih file CSV: {}", file.getAbsolutePath());
             CsvLoader.loadCsvToDb(file.getAbsolutePath());
-            try {
-                logger.info("[ADMIN] Memulai training ulang sistem...");
-                TrainingService.trainSystem(file.getAbsolutePath());
-                InferenceEngine.loadSystem();
+            
+            Task<Void> trainingTask = new Task<>() {
+                @Override
+                protected Void call() throws Exception {
+                    TrainingService.trainSystem(file.getAbsolutePath());
+                    InferenceEngine.loadSystem();
+                    EvaluationService.recalculateAndSave(); 
+                    return null;
+                }
+            };
+
+            trainingTask.setOnSucceeded(e -> {
                 loadAnalytics();
+                loadCachedMatrix();
                 plotFuzzyGraphs();
-                new Alert(Alert.AlertType.INFORMATION, "Import dan Training Berhasil!").show();
-            } catch (Exception e) {
-                logger.error("[ADMIN] Pelatihan Gagal", e);
-                new Alert(Alert.AlertType.ERROR, "Gagal: " + e.getMessage()).show();
-            }
+                new Alert(Alert.AlertType.INFORMATION, "Import, Training & Evaluasi Berhasil!").show();
+            });
+            
+            trainingTask.setOnFailed(e -> {
+                logger.error("[ADMIN] Pelatihan Gagal", trainingTask.getException());
+                new Alert(Alert.AlertType.ERROR, "Gagal: " + trainingTask.getException().getMessage()).show();
+            });
+
+            new Thread(trainingTask).start();
         }
     }
 
@@ -154,6 +167,7 @@ public class AdminController implements Initializable {
                 
                 stmt.executeUpdate("TRUNCATE TABLE dataset_cardio");
                 stmt.executeUpdate("TRUNCATE TABLE fuzzy_stats_v2");
+                EvaluationService.clearStats();
                 
                 InferenceEngine.means.clear();
                 InferenceEngine.stdDevs.clear();
@@ -167,6 +181,7 @@ public class AdminController implements Initializable {
                 chartFuzzyBP.getData().clear();
                 chartFuzzyAge.getData().clear();
                 chartFuzzyWeight.getData().clear();
+                updateMatrixUI(new EvaluationService.MatrixResult(0,0,0,0));
                 
                 new Alert(Alert.AlertType.INFORMATION, "Sistem berhasil direset.").show();
                 

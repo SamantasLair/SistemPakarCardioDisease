@@ -55,6 +55,13 @@ CREATE TABLE fuzzy_stats (
     std_dev DOUBLE
 );
 
+CREATE TABLE model_evaluation (
+    id INT PRIMARY KEY DEFAULT 1,
+    tp INT, tn INT, fp INT, fn INT,
+    accuracy DOUBLE, precision_val DOUBLE, recall DOUBLE, f1 DOUBLE,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO users (id, username, password, fullname, role) VALUES 
 (UUID(), 'admin', 'admin123', 'Dr. Strange', 'EXPERT'),
 (UUID(), 'user', 'user123', 'Tony Stark', 'PATIENT');
