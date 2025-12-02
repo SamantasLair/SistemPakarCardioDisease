@@ -9,6 +9,8 @@ import java.sql.Statement;
 import java.util.Optional;
 import java.util.ResourceBundle;
 import javafx.animation.TranslateTransition;
+import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.chart.BarChart;
@@ -17,7 +19,6 @@ import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextArea;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
@@ -32,7 +33,10 @@ public class AdminController implements Initializable {
     @FXML private BarChart<Number, String> chartRiskDist; 
     @FXML private BarChart<String, Number> barChartAge;
     @FXML private LineChart<Number, Number> chartFuzzyBP, chartFuzzyAge, chartFuzzyWeight;
-    @FXML private TextArea txtTree;
+    
+    @FXML private Label lblTP, lblTN, lblFP, lblFN;
+    @FXML private Label lblAccuracy, lblPrecision, lblRecall, lblF1;
+
     @FXML private VBox drawer;
     @FXML private VBox sidebar;
 
@@ -47,7 +51,6 @@ public class AdminController implements Initializable {
         
         try {
             InferenceEngine.loadSystem();
-            txtTree.setText(InferenceEngine.j48Rules);
             loadAnalytics();
             plotFuzzyGraphs();
         } catch (Exception e) {
@@ -80,9 +83,37 @@ public class AdminController implements Initializable {
     private void toggleDrawer() {
         TranslateTransition transition = new TranslateTransition(Duration.millis(300), drawer);
         if (isDrawerOpen) transition.setToX(500); 
-        else transition.setToX(0); 
+        else {
+            transition.setToX(0);
+            calculateMatrix(); 
+        }
         transition.play();
         isDrawerOpen = !isDrawerOpen;
+    }
+
+    private void calculateMatrix() {
+        lblAccuracy.setText("Menghitung...");
+        Task<EvaluationService.MatrixResult> task = new Task<>() {
+            @Override
+            protected EvaluationService.MatrixResult call() throws Exception {
+                return EvaluationService.evaluateModel();
+            }
+        };
+
+        task.setOnSucceeded(e -> {
+            EvaluationService.MatrixResult res = task.getValue();
+            lblTP.setText(String.valueOf(res.tp));
+            lblTN.setText(String.valueOf(res.tn));
+            lblFP.setText(String.valueOf(res.fp));
+            lblFN.setText(String.valueOf(res.fn));
+            
+            lblAccuracy.setText(String.format("%.1f%%", res.accuracy * 100));
+            lblPrecision.setText(String.format("%.1f%%", res.precision * 100));
+            lblRecall.setText(String.format("%.1f%%", res.recall * 100));
+            lblF1.setText(String.format("%.1f%%", res.f1 * 100));
+        });
+        
+        new Thread(task).start();
     }
 
     @FXML
@@ -93,21 +124,17 @@ public class AdminController implements Initializable {
         File file = fc.showOpenDialog(null);
         if (file != null) {
             logger.info("[ADMIN] User memilih file CSV: {}", file.getAbsolutePath());
-            
             CsvLoader.loadCsvToDb(file.getAbsolutePath());
             try {
                 logger.info("[ADMIN] Memulai training ulang sistem...");
-                InferenceEngine.trainSystem(file.getAbsolutePath());
-                
-                txtTree.setText(InferenceEngine.j48Rules);
+                TrainingService.trainSystem(file.getAbsolutePath());
+                InferenceEngine.loadSystem();
                 loadAnalytics();
                 plotFuzzyGraphs();
-                
                 new Alert(Alert.AlertType.INFORMATION, "Import dan Training Berhasil!").show();
-                logger.info("[ADMIN] Import dan Training Selesai.");
             } catch (Exception e) {
                 logger.error("[ADMIN] Pelatihan Gagal", e);
-                txtTree.setText("Pelatihan Gagal: " + e.getMessage());
+                new Alert(Alert.AlertType.ERROR, "Gagal: " + e.getMessage()).show();
             }
         }
     }
@@ -118,22 +145,19 @@ public class AdminController implements Initializable {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.setTitle("Konfirmasi Reset");
         alert.setHeaderText("Hapus Semua Data?");
-        alert.setContentText("Tindakan ini akan menghapus seluruh dataset, statistik, dan model AI.");
+        alert.setContentText("Tindakan ini akan menghapus seluruh dataset dan statistik.");
 
         Optional<ButtonType> result = alert.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
-            logger.warn("[ADMIN] User melakukan RESET DATABASE.");
             try (Connection conn = DBConnect.getConnection();
                  Statement stmt = conn.createStatement()) {
                 
                 stmt.executeUpdate("TRUNCATE TABLE dataset_cardio");
                 stmt.executeUpdate("TRUNCATE TABLE fuzzy_stats_v2");
-                stmt.executeUpdate("DELETE FROM ai_models");
                 
                 InferenceEngine.means.clear();
                 InferenceEngine.stdDevs.clear();
                 InferenceEngine.weights.clear();
-                InferenceEngine.j48Rules = "Model Legacy belum dilatih.";
                 
                 lblTotalData.setText("0");
                 lblHighRisk.setText("0");
@@ -143,10 +167,8 @@ public class AdminController implements Initializable {
                 chartFuzzyBP.getData().clear();
                 chartFuzzyAge.getData().clear();
                 chartFuzzyWeight.getData().clear();
-                txtTree.setText("");
                 
                 new Alert(Alert.AlertType.INFORMATION, "Sistem berhasil direset.").show();
-                logger.info("[ADMIN] Reset Berhasil.");
                 
             } catch (Exception e) {
                 logger.error("[ADMIN] Gagal Reset", e);
@@ -158,7 +180,6 @@ public class AdminController implements Initializable {
     @FXML private void handleSimulation() throws IOException { App.setRoot("patient"); }
 
     private void loadAnalytics() {
-        logger.debug("[ADMIN] Memuat data analitik dashboard...");
         try (Connection conn = DBConnect.getConnection();
              Statement stmt = conn.createStatement()) {
 
@@ -170,13 +191,11 @@ public class AdminController implements Initializable {
                 highRisk = rs.getInt(2);
                 lblTotalData.setText(String.format("%,d", total));
                 lblHighRisk.setText(String.format("%,d", highRisk));
-                logger.debug("[ADMIN] Stats: Total={}, HighRisk={}", total, highRisk);
             }
 
             double percent = (total > 0) ? ((double)highRisk / total * 100) : 0;
             lblRiskPercent.setText(String.format("%.1f%%", percent));
 
-            // Chart Risk
             rs = stmt.executeQuery("SELECT cardio, COUNT(*) FROM dataset_cardio GROUP BY cardio");
             XYChart.Series<Number, String> seriesRisk = new XYChart.Series<>();
             seriesRisk.setName("Jumlah Pasien");
@@ -193,7 +212,6 @@ public class AdminController implements Initializable {
             chartRiskDist.getData().clear();
             chartRiskDist.getData().add(seriesRisk);
 
-            // Chart Age
             rs = stmt.executeQuery("SELECT FLOOR(age_days/365/10)*10 as d, SUM(cardio) FROM dataset_cardio GROUP BY d ORDER BY d");
             XYChart.Series<String, Number> seriesAge = new XYChart.Series<>();
             seriesAge.setName("Kasus");
@@ -209,35 +227,22 @@ public class AdminController implements Initializable {
     }
 
     private void plotFuzzyGraphs() {
-        logger.debug("[ADMIN] Memplot grafik fuzzy...");
-        if (InferenceEngine.means.isEmpty()) {
-            logger.warn("[ADMIN] DATA KOSONG! InferenceEngine.means belum terisi. Grafik tidak akan muncul.");
-            return;
-        }
+        if (InferenceEngine.means.isEmpty()) return;
         
-        plotGaussian(chartFuzzyBP, InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"), "Tensi (mmHg)");
+        plotGaussian(chartFuzzyBP, InferenceEngine.means.get("ap_hi"), InferenceEngine.stdDevs.get("ap_hi"));
         
         String ageKey = InferenceEngine.means.containsKey("age") ? "age" : "age_days";
         double meanAge = InferenceEngine.means.getOrDefault(ageKey, 0.0);
         double stdAge = InferenceEngine.stdDevs.getOrDefault(ageKey, 1.0);
         
-        // Fix: Pastikan unit umur benar (tahun vs hari)
-        if (meanAge > 200) { 
-            meanAge /= 365.0; 
-            stdAge /= 365.0; 
-        }
+        if (meanAge > 200) { meanAge /= 365.0; stdAge /= 365.0; }
         
-        plotGaussian(chartFuzzyAge, meanAge, stdAge, "Umur (Tahun)");
-        plotGaussian(chartFuzzyWeight, InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"), "Berat (Kg)");
+        plotGaussian(chartFuzzyAge, meanAge, stdAge);
+        plotGaussian(chartFuzzyWeight, InferenceEngine.means.get("weight"), InferenceEngine.stdDevs.get("weight"));
     }
 
-    private void plotGaussian(LineChart<Number, Number> chart, Double mean, Double std, String label) {
-        if (mean == null || std == null) {
-            logger.warn("[ADMIN] Nilai NULL untuk grafik {}", label);
-            return;
-        }
-        
-        logger.debug("[ADMIN] Plotting {}: Mean={}, Std={}", label, mean, std);
+    private void plotGaussian(LineChart<Number, Number> chart, Double mean, Double std) {
+        if (mean == null || std == null) return;
         
         chart.getData().clear();
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
