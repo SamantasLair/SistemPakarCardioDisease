@@ -57,7 +57,7 @@ public class LoginController {
     }
 
     @FXML
-    private void handleBack() throws java.io.IOException {
-        App.setRoot("welcome");
+    private void handleToRegister() throws java.io.IOException {
+        App.setRoot("register");
     }
 }

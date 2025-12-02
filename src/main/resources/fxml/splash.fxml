@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.StackPane?>
+
+<StackPane xmlns="http://javafx.com/javafx/8.0.171" xmlns:fx="http://javafx.com/fxml/1" 
+           fx:controller="com.praktikumpbo.cardioexpert.SplashController" styleClass="root">
+    
+    <VBox fx:id="splashContainer" alignment="CENTER" spacing="20">
+        <Label text="CardioExpert" styleClass="splash-title"/>
+        <Label text="Medical Expert System" styleClass="splash-subtitle"/>
+        
+        <VBox alignment="CENTER" spacing="10" maxWidth="400">
+            <ProgressBar fx:id="progressBar" progress="0.0" prefWidth="300" style="-fx-accent: #0984e3;"/>
+            <Label fx:id="lblStatus" text="Memuat..." style="-fx-text-fill: #636e72; -fx-font-style: italic;"/>
+        </VBox>
+    </VBox>
+</StackPane>

@@ -11,7 +11,7 @@
 <StackPane xmlns="http://javafx.com/javafx/8.0.171" xmlns:fx="http://javafx.com/fxml/1" 
            fx:controller="com.praktikumpbo.cardioexpert.LoginController" style="-fx-background-color: #dfe6e9;">
     
-    <VBox fx:id="loginCard" alignment="CENTER" spacing="15" styleClass="card-pane" maxWidth="350" maxHeight="350">
+    <VBox fx:id="loginCard" alignment="CENTER" spacing="15" styleClass="card-pane" maxWidth="350" maxHeight="400">
         <Label text="Masuk CardioExpert" styleClass="title-label"/>
         
         <VBox spacing="5">
@@ -25,6 +25,6 @@
         </VBox>
         
         <Button text="MASUK" maxWidth="Infinity" onAction="#handleLogin" styleClass="button-primary"/>
-        <Button text="Batal" maxWidth="Infinity" onAction="#handleBack" styleClass="button-secondary"/>
+        <Button text="Daftar Akun Baru" maxWidth="Infinity" onAction="#handleToRegister" styleClass="button-secondary"/>
     </VBox>
 </StackPane>

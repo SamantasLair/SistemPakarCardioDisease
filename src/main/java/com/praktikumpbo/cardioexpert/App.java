@@ -14,7 +14,7 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) throws IOException {
-        scene = new Scene(loadFXML("welcome"), 1024, 700);
+        scene = new Scene(loadFXML("splash"), 1024, 700);
         scene.getStylesheets().add(getClass().getResource("/styles/styles.css").toExternalForm());
         stage.setTitle("CardioExpert - Medical System");
         stage.setScene(scene);
@@ -24,7 +24,6 @@ public class App extends Application {
     static void setRoot(String fxml) throws IOException {
         Parent root = loadFXML(fxml);
         
-        // Animasi Fade In Global saat ganti halaman
         root.setOpacity(0);
         scene.setRoot(root);
         
