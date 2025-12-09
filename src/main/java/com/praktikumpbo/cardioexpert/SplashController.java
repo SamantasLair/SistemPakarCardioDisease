@@ -35,7 +35,7 @@ public class SplashController {
 
                 Platform.runLater(() -> {
                     try {
-                        App.setRoot("login");
+                        App.setRoot("welcome");
                     } catch (Exception e) {
                         e.printStackTrace();
                     }

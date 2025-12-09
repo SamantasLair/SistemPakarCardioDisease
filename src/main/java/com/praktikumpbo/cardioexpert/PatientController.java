@@ -70,8 +70,8 @@ public class PatientController {
             ft.play();
         }
 
-        cbChol.getItems().addAll("Normal", "Di Atas Normal", "Sangat Tinggi");
-        cbGluc.getItems().addAll("Normal", "Di Atas Normal", "Sangat Tinggi");
+        cbChol.getItems().addAll("Normal(< 100 mg/dL)", "Di Atas Normal(100 – 125 mg/dL)", "Sangat Tinggi(≥ 126 mg/dL)");
+        cbGluc.getItems().addAll("Normal(< 200 mg/dL)", "Di Atas Normal(200 – 239 mg/dL)", "Sangat Tinggi(≥ 240 mg/dL)");
         cbChol.getSelectionModel().selectFirst();
         cbGluc.getSelectionModel().selectFirst();
         

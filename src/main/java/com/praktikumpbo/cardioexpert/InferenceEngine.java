@@ -54,7 +54,7 @@ public class InferenceEngine {
         inputs.put("alco", (double) alco);
         inputs.put("active", (double) active);
 
-        calcLog.append("=== SYSTEM LOG: HYBRID INFERENCE ENGINE ===\n");
+        calcLog.append("=== DETAILED CALCULATION LOG ===\n");
         calcLog.append(String.format("Timestamp: %s\n", java.time.LocalDateTime.now()));
         calcLog.append("----------------------------------------------------------------\n");
         
@@ -67,8 +67,6 @@ public class InferenceEngine {
         boolean isSmoker = (smoke == 1);
         boolean highChol = (chol == 3);
 
-        rulesLog.append("=== TRIGGERED RULES FOR CURRENT PATIENT ===\n");
-
         for (String attr : inputs.keySet()) {
             String dbKey = attr.equals("age") ? "age_days" : attr; 
             if (!weights.containsKey(dbKey) && weights.containsKey(attr)) dbKey = attr;
@@ -78,6 +76,7 @@ public class InferenceEngine {
             double corrWeight = weights.get(dbKey);
             double alpha = 0;
             String condition = "NORMAL";
+            String calculationNote = "";
 
             if (isContinuous(attr)) {
                 double dbVal = (attr.equals("age")) ? inputVal * 365 : inputVal;
@@ -86,13 +85,16 @@ public class InferenceEngine {
                 double z = (dbVal - mean) / std;
                 double mu = Math.exp(-0.5 * Math.pow(z, 2));
                 alpha = 1.0 - mu;
+                calculationNote = String.format("Gaussian(Val=%.0f, Mean=%.2f, Std=%.2f)", dbVal, mean, std);
                 
                 if (attr.equals("ap_hi")) {
-                    if (inputVal >= 140) { condition = "> 140 (CRISIS)"; isHypertensive = true; alpha = 1.0; }
+                    if (inputVal >= 180) { condition = "> 180 (CRISIS)"; isHypertensive = true; alpha = 1.0; }
+                    else if (inputVal >= 140) { condition = "> 140 (STG 2)"; isHypertensive = true; alpha = 1.0; }
                     else if (inputVal >= 130) { condition = "> 130 (STG 1)"; isHypertensive = true; alpha = 0.8; }
                     else if (inputVal >= 120) { condition = "> 120 (ELEVATED)"; alpha = 0.5; }
                 } else if (attr.equals("ap_lo")) {
-                    if (inputVal >= 90) { condition = "> 90 (STG 2)"; isHypertensive = true; alpha = 1.0; }
+                    if (inputVal >= 120) { condition = "> 120 (CRISIS)"; isHypertensive = true; alpha = 1.0; }
+                    else if (inputVal >= 90) { condition = "> 90 (STG 2)"; isHypertensive = true; alpha = 1.0; }
                     else if (inputVal >= 80) { condition = "> 80 (STG 1)"; isHypertensive = true; alpha = 0.8; }
                 } else if (attr.equals("weight")) {
                     double bmi = weight / Math.pow(height / 100.0, 2);
@@ -102,6 +104,7 @@ public class InferenceEngine {
 
             } else {
                 alpha = getCrispRisk(attr, inputVal);
+                calculationNote = "Crisp Logic (Category Mapping)";
                 if (alpha >= 1.0) condition = "HIGH RISK";
                 else if (alpha >= 0.5) condition = "MODERATE RISK";
             }
@@ -110,8 +113,13 @@ public class InferenceEngine {
             currentRiskSum += contribution;
             totalPossibleWeight += corrWeight;
 
-            calcLog.append(String.format("VAR: %-12s | Val: %-4.0f | Risk: %.2f | W: %.4f | Contrib: %.4f\n", attr.toUpperCase(), inputVal, alpha, corrWeight, contribution));
-            
+            calcLog.append(String.format("[VAR] %s\n", attr.toUpperCase()));
+            calcLog.append(String.format("   Input Val : %.2f\n", inputVal));
+            calcLog.append(String.format("   Weight (W): %.4f (Source: DB)\n", corrWeight));
+            calcLog.append(String.format("   Calc Risk : %s -> Alpha: %.4f\n", calculationNote, alpha));
+            calcLog.append(String.format("   Contrib   : Risk(%.4f) * W(%.4f) = %.4f\n", alpha, corrWeight, contribution));
+            calcLog.append("----------------------------------------------------------------\n");
+
             if (alpha > 0.4) {
                 rulesLog.append(String.format("IF %s IS %s THEN Risk += %.4f (Base W: %.4f)\n", attr.toUpperCase(), condition, contribution, corrWeight));
                 String advice = MedicalKnowledgeBase.getMedicalAdvice(attr, inputVal, height);
@@ -119,14 +127,18 @@ public class InferenceEngine {
             }
         }
 
-        calcLog.append("----------------------------------------------------------------\n");
+        calcLog.append("=== FINAL AGGREGATION ===\n");
+        calcLog.append(String.format("Sum of Contributions (Raw Score) : %.4f\n", currentRiskSum));
+        calcLog.append(String.format("Total Possible Weight (Denominator): %.4f\n", totalPossibleWeight));
 
         if (isHypertensive && isDiabetic) {
+            calcLog.append("Applying Synergy: Hypertension + Diabetes -> Score * 1.25\n");
             currentRiskSum *= 1.25; 
             rulesLog.append("IF HYPERTENSION AND DIABETES THEN Multiply Score by 1.25 (Synergy)\n");
             recommendations.add(0, "CRITICAL: The combination of Hypertension and High Glucose exponentially increases stroke risk.");
         }
         if (isSmoker && (isHypertensive || highChol)) {
+            calcLog.append("Applying Synergy: Smoker + (HTN/Chol) -> Score * 1.20\n");
             currentRiskSum *= 1.20;
             rulesLog.append("IF SMOKER AND (HYPERTENSION OR HIGH_CHOLESTEROL) THEN Multiply Score by 1.20\n");
             recommendations.add(0, "CRITICAL: Smoking with cardiovascular conditions severely damages arteries.");
@@ -138,8 +150,8 @@ public class InferenceEngine {
         }
         if (finalPercentage > 100) finalPercentage = 100; 
 
-        calcLog.append(String.format("FINAL WEIGHTED SCORE : %.4f\n", currentRiskSum));
-        calcLog.append(String.format("RISK PERCENTAGE      : %.2f%%\n", finalPercentage));
+        calcLog.append(String.format("Final Calculation: (%.4f / %.4f) * 100\n", currentRiskSum, totalPossibleWeight));
+        calcLog.append(String.format("FINAL RISK PERCENTAGE: %.2f%%\n", finalPercentage));
 
         String level;
         if (finalPercentage >= 60) level = "RISIKO TINGGI";

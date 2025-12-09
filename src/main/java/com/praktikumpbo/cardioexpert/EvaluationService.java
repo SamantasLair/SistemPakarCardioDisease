@@ -7,6 +7,8 @@ import java.sql.Statement;
 
 public class EvaluationService {
     
+    private static final double PREDICTION_THRESHOLD = 35.0;
+
     public static class MatrixResult {
         public int tp, tn, fp, fn;
         public double accuracy, precision, recall, f1;
@@ -90,7 +92,7 @@ public class EvaluationService {
                     ageY, gender, height, weight, apHi, apLo, chol, gluc, smoke, alco, active
                 );
 
-                int predicted = result.score >= 35.0 ? 1 : 0;
+                int predicted = result.score >= PREDICTION_THRESHOLD ? 1 : 0;
 
                 if (predicted == 1 && actual == 1) tp++;
                 else if (predicted == 0 && actual == 0) tn++;
